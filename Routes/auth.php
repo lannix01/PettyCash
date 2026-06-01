@@ -17,3 +17,5 @@ Route::get('/respondent-cards/{token}', [RespondentController::class, 'publicCar
     ->name('petty.respondents.card.public.show');
 Route::post('/respondent-cards/{token}/download', [RespondentController::class, 'publicCardDownload'])
     ->name('petty.respondents.card.public.download');
+Route::get('/rc/{token}', [RespondentController::class, 'publicCard'])
+    ->name('petty.respondents.card.public.short');

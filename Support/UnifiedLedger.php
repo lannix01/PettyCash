@@ -2,8 +2,6 @@
 
 namespace App\Modules\PettyCash\Support;
 
-use Illuminate\Support\Facades\DB;
-
 class UnifiedLedger
 {
     /**
@@ -18,7 +16,7 @@ class UnifiedLedger
      */
     public static function query()
     {
-        $sp = DB::table('petty_spendings as p')
+        $sp = PettyDatabase::table('petty_spendings as p')
             ->leftJoin('petty_bikes as b', function ($join) {
                 $join->on('b.id', '=', 'p.related_id')
                      ->where('p.type', '=', 'bike');
@@ -41,7 +39,7 @@ class UnifiedLedger
                 bt.batch_no as batch_no
             ");
 
-        $sv = DB::table('petty_bike_services as s')
+        $sv = PettyDatabase::table('petty_bike_services as s')
             ->leftJoin('petty_bikes as b', 'b.id', '=', 's.bike_id')
             ->selectRaw("
                 s.id as id,
@@ -60,6 +58,6 @@ class UnifiedLedger
                 NULL as batch_no
             ");
 
-        return DB::query()->fromSub($sp->unionAll($sv), 'u');
+        return PettyDatabase::query()->fromSub($sp->unionAll($sv), 'u');
     }
 }

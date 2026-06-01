@@ -7,8 +7,8 @@ use App\Modules\PettyCash\Models\Spending;
 use App\Modules\PettyCash\Models\SpendingAllocation;
 use App\Modules\PettyCash\Services\FundsAllocatorService;
 use App\Modules\PettyCash\Support\ApiResponder;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class SpendingController extends Controller
 {
@@ -56,7 +56,7 @@ class SpendingController extends Controller
             ->paginate($perPage)
             ->withQueryString();
 
-        $totals = DB::table('petty_spending_allocations as a')
+        $totals = PettyDatabase::table('petty_spending_allocations as a')
             ->join('petty_spendings as s', 's.id', '=', 'a.spending_id')
             ->whereIn('s.type', $types)
             ->when($subType !== '', fn ($query) => $query->where('s.sub_type', $subType))
@@ -178,7 +178,7 @@ class SpendingController extends Controller
         $allocations = [];
 
         try {
-            DB::transaction(function () use ($normalized, $amount, $fee, $allocator, $onlyBatch, &$spending, &$allocations) {
+            PettyDatabase::transaction(function () use ($normalized, $amount, $fee, $allocator, $onlyBatch, &$spending, &$allocations) {
                 $spending = Spending::query()->create([
                     'batch_id' => null,
                     'type' => $normalized['type'],
@@ -276,7 +276,7 @@ class SpendingController extends Controller
         $allocations = [];
 
         try {
-            DB::transaction(function () use ($spending, $normalized, $amount, $fee, $allocator, $onlyBatch, &$allocations) {
+            PettyDatabase::transaction(function () use ($spending, $normalized, $amount, $fee, $allocator, $onlyBatch, &$allocations) {
                 $spending->fill([
                     'type' => $normalized['type'],
                     'sub_type' => $normalized['sub_type'],
@@ -320,7 +320,7 @@ class SpendingController extends Controller
             return $this->errorResponse('Use token endpoints to delete token spendings.', 409);
         }
 
-        DB::transaction(function () use ($spending) {
+        PettyDatabase::transaction(function () use ($spending) {
             SpendingAllocation::query()->where('spending_id', $spending->id)->delete();
             $spending->delete();
         });

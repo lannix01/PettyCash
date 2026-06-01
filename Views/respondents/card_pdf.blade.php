@@ -22,12 +22,12 @@
         }
         .logo-header{
             background: #ffffff;
-            padding: 10px 18px 8px;
+            padding: 8px 18px 4px;
             border-bottom: 1px solid #e2e8f0;
         }
         .top-logo-wrap{
             width: 100%;
-            height: 130px;
+            height: 108px;
             text-align: center;
         }
         .top-logo-wrap table{
@@ -42,7 +42,7 @@
         .logo-img{
             width: auto;
             max-width: 95%;
-            max-height: 100px;
+            max-height: 92px;
             display: block;
             margin: 0 auto;
         }
@@ -53,38 +53,45 @@
             color: #0f2f6a;
         }
         .meta-strip{
-            background: #0f2f6a;
+            background: {{ $theme['accent_dark'] }};
             color: #ffffff;
-            padding: 7px 18px;
+            padding: 8px 18px;
         }
         .band-row{
             width: 100%;
+            text-align: center;
+            position: relative;
         }
         .band-sub{
-            float: left;
-            font-size: 11px;
+            display: inline-block;
+            font-size: 13px;
             color: #ffffff;
-            letter-spacing: .06em;
+            letter-spacing: .12em;
             text-transform: uppercase;
-            font-weight: 700;
+            font-weight: 900;
         }
         .status-pill{
-            float: right;
+            position: absolute;
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
             display: inline-block;
-            padding: 6px 14px;
+            padding: 5px 12px;
             border-radius: 999px;
-            border: 1px solid #bcf3ce;
-            background: #f0fff4;
-            color: #116d37;
-            font-size: 11px;
-            font-weight: 800;
+            background: {{ $theme['badge_bg'] }};
+            color: {{ $theme['accent_dark'] }};
+            font-size: 10px;
+            font-weight: 900;
             letter-spacing: .08em;
+            text-transform: uppercase;
         }
-        .band-clear{
-            clear: both;
-        }
+        .band-clear{display:none}
         .content{
-            padding: 16px 18px;
+            padding: 16px 18px 18px;
+        }
+        .footer-strip{
+            height: 6px;
+            background: {{ $theme['accent'] }};
         }
         .layout{
             width: 100%;
@@ -95,7 +102,7 @@
             vertical-align: top;
         }
         .photo-col{
-            width: 24%;
+            width: 25%;
             padding-right: 12px;
         }
         .profile-photo{
@@ -108,7 +115,7 @@
             line-height: 150px;
             font-size: 46px;
             font-weight: 900;
-            color: #1e3a8a;
+            color: {{ $theme['accent_dark'] }};
             overflow: hidden;
         }
         .profile-photo img{
@@ -116,8 +123,17 @@
             height: 150px;
             object-fit: cover;
         }
+        .photo-phone{
+            margin-top: 10px;
+            font-size: 13px;
+            font-weight: 800;
+            letter-spacing: .08em;
+            color: #334155;
+            text-align: center;
+            word-wrap: break-word;
+        }
         .identity-col{
-            width: 52%;
+            width: 51%;
             padding-right: 10px;
         }
         .person-name{
@@ -127,32 +143,33 @@
             font-weight: 800;
             color: #0b1220;
             text-transform: uppercase;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
         }
         .person-title{
-            margin-top: 2px;
-            font-size: 30px;
-            line-height: 1.05;
+            margin-top: 4px;
+            font-size: 17px;
+            line-height: 1.12;
             font-weight: 900;
-            color: #0c4a8a;
+            color: {{ $theme['accent_dark'] }};
             text-transform: uppercase;
             letter-spacing: .04em;
         }
         .mini-line{
-            margin-top: 9px;
+            margin-top: 10px;
             font-size: 12px;
             color: #334155;
         }
         .mini-label{
             display: inline-block;
-            min-width: 54px;
+            min-width: 72px;
             font-size: 10px;
             font-weight: 800;
             color: #64748b;
             text-transform: uppercase;
             letter-spacing: .05em;
+        }
+        .mini-value-strong{
+            font-weight: 900;
+            color: #0f172a;
         }
         .qr-col{
             width: 24%;
@@ -167,14 +184,14 @@
             background: #ffffff;
         }
         .qr-img{
-            width: 120px;
-            height: 120px;
+            width: 92px;
+            height: 92px;
             display: block;
         }
         .qr-fallback{
-            width: 120px;
-            height: 120px;
-            line-height: 120px;
+            width: 92px;
+            height: 92px;
+            line-height: 92px;
             text-align: center;
             font-size: 10px;
             color: #475569;
@@ -182,18 +199,12 @@
             border: 1px dashed #cbd5e1;
         }
         .scan-caption{
-            margin-top: 6px;
+            margin-top: 7px;
             font-size: 10px;
-            font-weight: 800;
+            font-weight: 900;
             color: #0f172a;
             text-transform: uppercase;
             letter-spacing: .07em;
-        }
-        .issued{
-            margin-top: 8px;
-            text-align: right;
-            font-size: 10px;
-            color: #64748b;
         }
     </style>
 </head>
@@ -219,7 +230,7 @@
         <div class="meta-strip">
             <div class="band-row">
                 <div class="band-sub">STAFF IDENTIFICATION CARD</div>
-                <span class="status-pill">Verified</span>
+                <span class="status-pill">{{ $respondent->statusLabel() }}</span>
                 <div class="band-clear"></div>
             </div>
         </div>
@@ -235,18 +246,25 @@
                                 {{ strtoupper(substr((string) $respondent->name, 0, 1)) }}
                             @endif
                         </div>
+                        <div class="photo-phone">{{ $respondent->phone ?: '-' }}</div>
                     </td>
                     <td class="identity-col">
                         <div class="person-name">{{ $respondent->name ?: '-' }}</div>
-                        <div class="person-title">{{ strtoupper((string) ($respondent->profile_title ?: 'Executive')) }}</div>
+                        <div class="person-title">{{ strtoupper((string) ($respondent->category ?: \App\Modules\PettyCash\Models\Respondent::CATEGORY_OTHER_STAFF)) }}</div>
 
+                        <div class="mini-line">
+                            <span class="mini-label">Staff ID</span>
+                            <span class="mini-value-strong">{{ $respondent->staff_id ?: '-' }}</span>
+                        </div>
                         <div class="mini-line">
                             <span class="mini-label">Email</span>
                             {{ $respondent->profile_email ?: '-' }}
                         </div>
                         <div class="mini-line">
-                            <span class="mini-label">Phone</span>
-                            {{ $respondent->phone ?: '-' }}
+                            <span class="mini-label">Issued</span>
+                            {{ optional($generatedAt)->format('Y-m-d') ?: '-' }}
+                            <span class="mini-label" style="margin-left:18px">Expiry</span>
+                            {{ optional($expiresAt)->format('Y-m-d') ?: '-' }}
                         </div>
                     </td>
                     <td class="qr-col">
@@ -254,16 +272,15 @@
                             @if(!empty($qrDataUri))
                                 <img class="qr-img" src="{{ $qrDataUri }}" alt="Verification QR">
                             @else
-                                <div class="qr-fallback">QR unavailable</div>
+                                <div class="qr-fallback">QR</div>
                             @endif
                         </div>
                         <div class="scan-caption">Scan To Verify</div>
                     </td>
                 </tr>
             </table>
-
-            <div class="issued">Issued: {{ $generatedAt->format('Y-m-d H:i') }}</div>
         </div>
+        <div class="footer-strip"></div>
     </div>
 </div>
 </body>

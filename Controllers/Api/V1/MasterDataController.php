@@ -141,6 +141,7 @@ class MasterDataController extends Controller
         }
 
         $respondents = Respondent::query()
+            ->selectable()
             ->when($category !== '', fn ($query) => $query->where('category', $category))
             ->when($q !== '', function ($query) use ($q) {
                 $query->where(function ($nested) use ($q) {
@@ -177,9 +178,13 @@ class MasterDataController extends Controller
             'name' => ['required', 'string', 'max:150'],
             'phone' => ['nullable', 'string', 'max:50'],
             'category' => ['nullable', 'string', 'max:80'],
+            'status' => ['nullable', 'string', 'in:' . implode(',', array_keys(Respondent::statusOptions()))],
         ]);
 
-        $respondent = Respondent::query()->create($data);
+        $respondent = Respondent::query()->create([
+            ...$data,
+            'status' => Respondent::normalizeStatus($data['status'] ?? null),
+        ]);
 
         return $this->successResponse([
             'respondent' => $this->mapRespondent($respondent),
@@ -196,12 +201,17 @@ class MasterDataController extends Controller
             'name' => ['sometimes', 'required', 'string', 'max:150'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:50'],
             'category' => ['sometimes', 'nullable', 'string', 'max:80'],
+            'status' => ['sometimes', 'required', 'string', 'in:' . implode(',', array_keys(Respondent::statusOptions()))],
         ]);
 
         if (empty($data)) {
             return $this->errorResponse('No update fields supplied.', 422, [
                 'payload' => ['Provide at least one field to update.'],
             ]);
+        }
+
+        if (array_key_exists('status', $data)) {
+            $data['status'] = Respondent::normalizeStatus($data['status']);
         }
 
         $respondent->fill($data);
@@ -220,7 +230,13 @@ class MasterDataController extends Controller
 
         $hasSpendings = Spending::query()->where('respondent_id', $respondent->id)->exists();
         if ($hasSpendings) {
-            return $this->errorResponse('Cannot delete respondent with related spendings.', 409);
+            $respondent->update([
+                'status' => Respondent::STATUS_DECOMMISSIONED,
+            ]);
+
+            return $this->successResponse([
+                'respondent' => $this->mapRespondent($respondent->fresh()),
+            ], 'Respondent decommissioned.');
         }
 
         $respondent->delete();
@@ -250,6 +266,8 @@ class MasterDataController extends Controller
             'name' => $respondent->name,
             'phone' => $respondent->phone,
             'category' => $respondent->category,
+            'status' => $respondent->normalizedStatus(),
+            'status_label' => $respondent->statusLabel(),
         ];
     }
 

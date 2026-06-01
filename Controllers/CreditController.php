@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Modules\PettyCash\Models\Batch;
 use App\Modules\PettyCash\Models\Credit;
 use App\Modules\PettyCash\Services\BatchService;
+use App\Modules\PettyCash\Support\PettyAccess;
 use App\Modules\PettyCash\Support\TabularExport;
 use Barryvdh\DomPDF\Facade\Pdf;
 
@@ -16,22 +17,49 @@ class CreditController extends Controller
     {
         $from = $request->query('from');
         $to = $request->query('to');
+        $q = trim((string) $request->query('q', ''));
+        $sort = strtolower(trim((string) $request->query('sort', 'date_desc')));
+        $allowedSorts = ['date_desc', 'date_asc', 'amount_desc', 'amount_asc'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'date_desc';
+        }
 
-        $credits = Credit::query()
+        $creditsQuery = Credit::query()
             ->with('batch')
             ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
             ->when($to, fn($q) => $q->whereDate('date', '<=', $to))
-            ->orderByDesc('date')
-            ->orderByDesc('id')
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    $inner->where('reference', 'like', '%' . $q . '%')
+                        ->orWhere('description', 'like', '%' . $q . '%')
+                        ->orWhereHas('batch', fn ($batch) => $batch->where('batch_no', 'like', '%' . $q . '%'));
+                });
+            });
+
+        match ($sort) {
+            'date_asc' => $creditsQuery->orderBy('date')->orderBy('id'),
+            'amount_desc' => $creditsQuery->orderByDesc('amount')->orderByDesc('date')->orderByDesc('id'),
+            'amount_asc' => $creditsQuery->orderBy('amount')->orderByDesc('date')->orderByDesc('id'),
+            default => $creditsQuery->orderByDesc('date')->orderByDesc('id'),
+        };
+
+        $credits = (clone $creditsQuery)
             ->paginate(20)
             ->withQueryString();
 
         $total = (float) Credit::query()
             ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
             ->when($to, fn($q) => $q->whereDate('date', '<=', $to))
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    $inner->where('reference', 'like', '%' . $q . '%')
+                        ->orWhere('description', 'like', '%' . $q . '%')
+                        ->orWhereHas('batch', fn ($batch) => $batch->where('batch_no', 'like', '%' . $q . '%'));
+                });
+            })
             ->sum('amount');
 
-        return view('pettycash::credits.index', compact('credits', 'total', 'from', 'to'));
+        return view('pettycash::credits.index', compact('credits', 'total', 'from', 'to', 'q', 'sort'));
     }
 
     public function create()
@@ -64,13 +92,33 @@ class CreditController extends Controller
         $format = strtolower((string) $request->query('format', 'pdf'));
         $from = $request->query('from');
         $to = $request->query('to');
+        $q = trim((string) $request->query('q', ''));
+        $sort = strtolower(trim((string) $request->query('sort', 'date_desc')));
+        $allowedSorts = ['date_desc', 'date_asc', 'amount_desc', 'amount_asc'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'date_desc';
+        }
 
-        $credits = Credit::query()
+        $creditsQuery = Credit::query()
             ->with('batch')
             ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
             ->when($to, fn($q) => $q->whereDate('date', '<=', $to))
-            ->orderByDesc('date')
-            ->get();
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    $inner->where('reference', 'like', '%' . $q . '%')
+                        ->orWhere('description', 'like', '%' . $q . '%')
+                        ->orWhereHas('batch', fn ($batch) => $batch->where('batch_no', 'like', '%' . $q . '%'));
+                });
+            });
+
+        match ($sort) {
+            'date_asc' => $creditsQuery->orderBy('date')->orderBy('id'),
+            'amount_desc' => $creditsQuery->orderByDesc('amount')->orderByDesc('date')->orderByDesc('id'),
+            'amount_asc' => $creditsQuery->orderBy('amount')->orderByDesc('date')->orderByDesc('id'),
+            default => $creditsQuery->orderByDesc('date')->orderByDesc('id'),
+        };
+
+        $credits = $creditsQuery->get();
 
         $total = (float) $credits->sum('amount');
 
@@ -111,6 +159,8 @@ class CreditController extends Controller
             'total' => $total,
             'from' => $from,
             'to' => $to,
+            'q' => $q,
+            'sort' => $sort,
         ])->setPaper('a4', 'portrait');
 
         return $pdf->download('pettycash-credits.pdf');
@@ -150,6 +200,22 @@ public function update(Request $request, Credit $credit)
     }
 
     return redirect()->route('petty.credits.index')->with('success', 'Credit updated.');
+}
+
+public function destroy(Credit $credit)
+{
+    abort_unless(PettyAccess::isAdmin(auth('petty')->user()), 403);
+
+    $batch = Batch::find($credit->batch_id);
+    $credit->delete();
+
+    if ($batch) {
+        $sumCredits = (float) Credit::where('batch_id', $batch->id)->sum('amount');
+        $batch->credited_amount = $sumCredits;
+        $batch->save();
+    }
+
+    return redirect()->route('petty.credits.index')->with('success', 'Credit deleted.');
 }
 
 }

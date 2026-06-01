@@ -46,6 +46,17 @@
     .section-label{margin:0 0 8px;font-size:15px;font-weight:900}
     .sms-help{margin:0;padding:8px 10px;border-radius:10px;border:1px solid #e0eaff;background:#eff8ff;color:#1849a9;font-size:12px}
     .checkbox-inline{display:flex;gap:8px;align-items:center;padding:10px 0}
+    .matrix-grid{display:grid;gap:10px;margin-top:10px}
+    .matrix-row{display:grid;grid-template-columns:minmax(180px,1.2fr) 110px 110px minmax(220px,1fr) minmax(220px,1fr);gap:10px;align-items:start;padding:10px 0;border-bottom:1px solid #eef2f6}
+    .matrix-row:last-child{border-bottom:none}
+    .matrix-head{font-size:11px;font-weight:900;color:#475467;text-transform:uppercase;letter-spacing:.05em}
+    .matrix-event{font-size:13px;font-weight:800;color:#101828}
+    .role-stack{display:grid;gap:6px}
+    .role-stack label{display:flex;align-items:center;gap:8px;font-size:12px;color:#344054}
+    @media(max-width:1080px){
+        .matrix-row{grid-template-columns:1fr}
+        .matrix-head{display:none}
+    }
 
     .sms-modal{
         position:fixed;
@@ -96,7 +107,7 @@
             <div class="muted">Unread: <strong>{{ $unreadCount ?? 0 }}</strong></div>
         </div>
         <div style="display:flex;gap:10px;flex-wrap:wrap">
-            <button class="btn" type="button" onclick="openSmsSettingsModal()">Configure SMS Settings</button>
+            <button class="btn" type="button" onclick="openSmsSettingsModal()">Notification Center</button>
             <form method="POST" action="{{ route('petty.notifications.read_all') }}" style="margin:0">
                 @csrf
                 <button class="btn2" type="submit">Mark all read</button>
@@ -205,13 +216,13 @@
         <div class="sms-backdrop" onclick="closeSmsSettingsModal()"></div>
         <div class="sms-panel" role="dialog" aria-modal="true" aria-labelledby="smsSettingsTitle">
             <div class="sms-modal-top">
-                <h3 id="smsSettingsTitle" class="sub-title">SMS Notification Settings</h3>
+                <h3 id="smsSettingsTitle" class="sub-title">Notification Center</h3>
                 <button class="btn2" type="button" onclick="closeSmsSettingsModal()">Close</button>
             </div>
 
             <div class="sms-section" style="margin-top:12px">
                 <p class="sms-help">
-                    Configure admin numbers, reusable SMS templates, and assign each event to a specific template.
+                    Control alerts by SMS and email, and decide which roles should receive token, balance, credit, and shortfall notifications.
                 </p>
             </div>
 
@@ -262,7 +273,7 @@
                                     <td>{{ $c->phone_no }}</td>
                                     <td>{{ $c->is_active ? 'Active' : 'Inactive' }}</td>
                                     <td>
-                                        <form method="POST" action="{{ route('petty.notifications.admin_contacts.destroy', $c->id) }}" onsubmit="return confirm('Remove this admin contact?')" style="margin:0">
+                                        <form method="POST" action="{{ route('petty.notifications.admin_contacts.destroy', $c->id) }}" data-confirm="Delete this admin contact?" style="margin:0">
                                             @csrf
                                             @method('DELETE')
                                             <button class="btn-danger" type="submit">Delete</button>
@@ -317,7 +328,7 @@
                                     <td>{{ $t->is_active ? 'Active' : 'Inactive' }}</td>
                                     <td style="max-width:320px;white-space:pre-line">{{ $t->body }}</td>
                                     <td>
-                                        <form method="POST" action="{{ route('petty.notifications.sms_templates.destroy', $t->id) }}" onsubmit="return confirm('Remove this template?')" style="margin:0">
+                                        <form method="POST" action="{{ route('petty.notifications.sms_templates.destroy', $t->id) }}" data-confirm="Delete this SMS template?" style="margin:0">
                                             @csrf
                                             @method('DELETE')
                                             <button class="btn-danger" type="submit">Delete</button>
@@ -334,7 +345,7 @@
             </div>
 
             <section class="sms-section" style="margin-top:12px">
-                <h4 class="section-label">Template Usage and Alert Thresholds</h4>
+                <h4 class="section-label">Channel Rules, Templates, and Thresholds</h4>
                 <form method="POST" action="{{ route('petty.notifications.sms_settings.save') }}">
                     @csrf
                     <input type="hidden" name="sms_form" value="sms_settings">
@@ -357,6 +368,14 @@
                         </div>
 
                         <div>
+                            <div class="muted">Email Enabled</div>
+                            <label class="muted checkbox-inline">
+                                <input type="hidden" name="email_enabled" value="0">
+                                <input type="checkbox" name="email_enabled" value="1" @checked((string) old('email_enabled', ($settings->email_enabled ?? true) ? '1' : '0') === '1')> Enable Email sending
+                            </label>
+                        </div>
+
+                        <div>
                             <div class="muted">Low Balance Threshold</div>
                             <input class="input" type="number" step="0.01" min="0" name="low_balance_threshold" value="{{ old('low_balance_threshold', number_format((float)($settings->low_balance_threshold ?? 0), 2, '.', '')) }}">
                         </div>
@@ -364,6 +383,63 @@
                         <div>
                             <div class="muted">Low Credit Threshold</div>
                             <input class="input" type="number" step="0.01" min="0" name="low_credit_threshold" value="{{ old('low_credit_threshold', number_format((float)($settings->low_credit_threshold ?? 0), 2, '.', '')) }}">
+                        </div>
+                    </div>
+
+                    <div style="margin-top:14px">
+                        <div class="muted">Event channel matrix and role targeting</div>
+                        <div class="matrix-grid">
+                            <div class="matrix-row matrix-head">
+                                <div>Event</div>
+                                <div>SMS</div>
+                                <div>Email</div>
+                                <div>SMS Roles</div>
+                                <div>Email Roles</div>
+                            </div>
+                            @foreach($eventOptions as $eventKey => $eventLabel)
+                                @php
+                                    $selectedSmsRoles = array_values((array) old('sms_role_usage.' . $eventKey, $smsRoleMap[$eventKey] ?? []));
+                                    $selectedEmailRoles = array_values((array) old('email_role_usage.' . $eventKey, $emailRoleMap[$eventKey] ?? []));
+                                    $smsChecked = in_array($eventKey, (array) old('sms_event_enabled', array_keys(array_filter($smsEventMap ?? []))), true);
+                                    $emailChecked = in_array($eventKey, (array) old('email_event_enabled', array_keys(array_filter($emailEventMap ?? []))), true);
+                                @endphp
+                                <div class="matrix-row">
+                                    <div>
+                                        <div class="matrix-event">{{ $eventLabel }}</div>
+                                        <div class="muted" style="margin-top:4px">{{ $eventKey }}</div>
+                                    </div>
+                                    <div class="role-stack">
+                                        <label>
+                                            <input type="checkbox" name="sms_event_enabled[]" value="{{ $eventKey }}" @checked($smsChecked)>
+                                            <span>SMS On</span>
+                                        </label>
+                                    </div>
+                                    <div class="role-stack">
+                                        <label>
+                                            <input type="checkbox" name="email_event_enabled[]" value="{{ $eventKey }}" @checked($emailChecked)>
+                                            <span>Email On</span>
+                                        </label>
+                                    </div>
+                                    <div class="role-stack">
+                                        @foreach($roleOptions as $roleKey => $roleLabel)
+                                            <label>
+                                                <input type="checkbox" name="sms_role_usage[{{ $eventKey }}][]" value="{{ $roleKey }}" @checked(in_array($roleKey, $selectedSmsRoles, true))>
+                                                <span>{{ $roleLabel }}</span>
+                                            </label>
+                                        @endforeach
+                                        <div class="muted">Leave blank to use the selected contact list without restricting by role.</div>
+                                    </div>
+                                    <div class="role-stack">
+                                        @foreach($roleOptions as $roleKey => $roleLabel)
+                                            <label>
+                                                <input type="checkbox" name="email_role_usage[{{ $eventKey }}][]" value="{{ $roleKey }}" @checked(in_array($roleKey, $selectedEmailRoles, true))>
+                                                <span>{{ $roleLabel }}</span>
+                                            </label>
+                                        @endforeach
+                                        <div class="muted">Leave blank to use the default configured email recipients.</div>
+                                    </div>
+                                </div>
+                            @endforeach
                         </div>
                     </div>
 
@@ -381,6 +457,34 @@
                                             </option>
                                         @endforeach
                                     </select>
+                                </div>
+                            @endforeach
+                        </div>
+                    </div>
+
+                    <div style="margin-top:12px">
+                        <div class="muted">Choose SMS recipients per event</div>
+                        <div class="grid2" style="margin-top:8px">
+                            @foreach($eventOptions as $eventKey => $eventLabel)
+                                @php
+                                    $selectedRecipients = old('recipient_usage.' . $eventKey, $recipientUsage[$eventKey] ?? []);
+                                    $selectedRecipients = array_map('intval', (array) $selectedRecipients);
+                                @endphp
+                                <div style="border:1px solid #e7e9f2;border-radius:12px;padding:10px;background:#fcfcfd">
+                                    <div class="muted" style="margin-bottom:8px">{{ $eventLabel }}</div>
+                                    @forelse($adminContacts as $c)
+                                        <label class="checkbox-inline" style="padding:4px 0">
+                                            <input
+                                                type="checkbox"
+                                                name="recipient_usage[{{ $eventKey }}][]"
+                                                value="{{ $c->id }}"
+                                                @checked(in_array((int) $c->id, $selectedRecipients, true))
+                                            >
+                                            {{ $c->name }} @if($c->role)<span class="muted">({{ $c->role }})</span>@endif
+                                        </label>
+                                    @empty
+                                        <div class="muted">No admin contacts available. Add contacts first.</div>
+                                    @endforelse
                                 </div>
                             @endforeach
                         </div>

@@ -20,11 +20,11 @@
         <tr>
             <th>Hostel</th>
             <th>Site S.N</th>
-            <th>Contact Person</th>
-            <th>Meter</th>
-            <th>Phone</th>
+            <th>Name</th>
+            <th>Meter Number</th>
+            <th>Phone Number</th>
             <th>Routers</th>
-            <th>Stake</th>
+            <th>Billing Cycle</th>
             <th>Amount Due</th>
             <th>Last Payment</th>
         </tr>

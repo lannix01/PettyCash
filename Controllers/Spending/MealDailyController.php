@@ -8,11 +8,12 @@ use App\Modules\PettyCash\Models\MealPayment;
 use App\Modules\PettyCash\Models\Respondent;
 use App\Modules\PettyCash\Models\Spending;
 use App\Modules\PettyCash\Services\FundsAllocatorService;
+use App\Modules\PettyCash\Support\PettyAccess;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class MealDailyController extends Controller
 {
@@ -27,6 +28,12 @@ class MealDailyController extends Controller
         $respondentId = $request->integer('respondent_id') ?: null;
         $from = $request->query('from');
         $to = $request->query('to');
+        $q = trim((string) $request->query('q', ''));
+        $sort = strtolower(trim((string) $request->query('sort', 'date_desc')));
+        $allowedSorts = ['date_desc', 'date_asc', 'amount_desc', 'amount_asc'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'date_desc';
+        }
         $status = strtolower(trim((string) $request->query('status', 'all')));
         if (!in_array($status, ['all', 'paid', 'unpaid'], true)) {
             $status = 'all';
@@ -42,12 +49,33 @@ class MealDailyController extends Controller
                     $w->where('respondent_id', $respondentId)
                         ->orWhereHas('respondents', fn ($r) => $r->where('petty_respondents.id', $respondentId));
                 });
+            })
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    $inner->where('notes', 'like', '%' . $q . '%')
+                        ->orWhereHas('respondent', fn ($respondent) => $respondent
+                            ->where('name', 'like', '%' . $q . '%')
+                            ->orWhere('phone', 'like', '%' . $q . '%'))
+                        ->orWhereHas('respondents', fn ($respondents) => $respondents
+                            ->where('petty_respondents.name', 'like', '%' . $q . '%')
+                            ->orWhere('petty_respondents.phone', 'like', '%' . $q . '%'))
+                        ->orWhereHas('payment', fn ($payment) => $payment
+                            ->where('reference', 'like', '%' . $q . '%')
+                            ->orWhere('receiver_name', 'like', '%' . $q . '%')
+                            ->orWhere('receiver_phone', 'like', '%' . $q . '%')
+                            ->orWhere('notes', 'like', '%' . $q . '%'));
+                });
             });
+
+        match ($sort) {
+            'date_asc' => $baseQuery->orderBy('spending_date')->orderBy('id'),
+            'amount_desc' => $baseQuery->orderByDesc('amount')->orderByDesc('spending_date')->orderByDesc('id'),
+            'amount_asc' => $baseQuery->orderBy('amount')->orderByDesc('spending_date')->orderByDesc('id'),
+            default => $baseQuery->orderByDesc('spending_date')->orderByDesc('id'),
+        };
 
         $dailySpendings = (clone $baseQuery)
             ->with(['respondent:id,name', 'respondents:id,name', 'payment:id,date,reference'])
-            ->orderByDesc('spending_date')
-            ->orderByDesc('id')
             ->paginate(25)
             ->withQueryString();
 
@@ -68,6 +96,7 @@ class MealDailyController extends Controller
             ->get();
 
         $respondents = Respondent::query()
+            ->selectable()
             ->orderBy('name')
             ->get(['id', 'name', 'phone']);
 
@@ -106,7 +135,9 @@ class MealDailyController extends Controller
             'serviceSpentNet',
             'actualBalance',
             'selectionStats',
-            'selectedDailyIds'
+            'selectedDailyIds',
+            'q',
+            'sort'
         ));
     }
 
@@ -155,32 +186,162 @@ class MealDailyController extends Controller
         }
 
         $data = $request->validate([
+            'range_from' => ['required', 'date'],
+            'range_to' => ['required', 'date'],
+            'day_entries' => ['required', 'array', 'min:1'],
+            'day_entries.*.date' => ['required', 'date'],
+            'day_entries.*.amount' => ['required', 'numeric', 'min:0.01'],
+            'day_entries.*.notes' => ['required', 'string', 'max:255'],
+            'day_entries.*.respondent_ids' => ['required', 'array', 'min:1'],
+            'day_entries.*.respondent_ids.*' => ['integer', 'exists:petty_respondents,id'],
+        ]);
+
+        $from = Carbon::parse($data['range_from'])->startOfDay();
+        $to = Carbon::parse($data['range_to'])->startOfDay();
+        if ($from->gt($to)) {
+            [$from, $to] = [$to, $from];
+        }
+
+        $expectedDates = [];
+        $cursor = $from->copy();
+        while ($cursor->lte($to)) {
+            $expectedDates[] = $cursor->toDateString();
+            $cursor->addDay();
+        }
+
+        $rawEntries = collect($data['day_entries'] ?? [])
+            ->map(function (array $entry) {
+                return [
+                    'date' => Carbon::parse($entry['date'])->toDateString(),
+                    'amount' => round((float) ($entry['amount'] ?? 0), 2),
+                    'notes' => trim((string) ($entry['notes'] ?? '')),
+                    'respondent_ids' => $this->normalizeIdList((array) ($entry['respondent_ids'] ?? [])),
+                ];
+            });
+
+        $enteredDates = $rawEntries->pluck('date')->all();
+        if ($enteredDates !== $expectedDates) {
+            return back()->withErrors([
+                'day_entries' => 'Each day in the selected range must be listed once so the bill stays fully auditable.',
+            ])->withInput();
+        }
+
+        $duplicateDate = collect($enteredDates)->duplicates()->first();
+        if ($duplicateDate) {
+            return back()->withErrors([
+                'day_entries' => 'Duplicate day entry found for ' . $duplicateDate . '.',
+            ])->withInput();
+        }
+
+        $respondentIds = $rawEntries
+            ->pluck('respondent_ids')
+            ->flatten()
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $respondentsById = Respondent::query()
+            ->whereIn('id', $respondentIds)
+            ->get()
+            ->keyBy('id');
+
+        foreach ($rawEntries as $index => $entry) {
+            foreach ($entry['respondent_ids'] as $respondentId) {
+                $respondent = $respondentsById->get((int) $respondentId);
+                if (!$respondent || !$respondent->isSelectableForSpending()) {
+                    return back()->withErrors([
+                        "day_entries.$index.respondent_ids" => ($respondent?->name ?: 'A selected respondent') . ' is not active and cannot be assigned to a new daily bill.',
+                    ])->withInput();
+                }
+            }
+        }
+
+        $createdRows = 0;
+
+        PettyDatabase::transaction(function () use ($rawEntries, &$createdRows) {
+            foreach ($rawEntries as $entry) {
+                $row = MealDailySpending::query()->create([
+                    'respondent_id' => null,
+                    'spending_date' => $entry['date'],
+                    'amount' => $entry['amount'],
+                    'notes' => $entry['notes'],
+                    'recorded_by' => auth('petty')->id(),
+                ]);
+
+                $row->respondents()->sync($entry['respondent_ids']);
+                $createdRows++;
+            }
+        });
+
+        return redirect()
+            ->route('petty.meals.daily.index', [
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+            ])
+            ->with('success', 'Daily meal bill saved for ' . $createdRows . ' day(s).');
+    }
+
+    public function edit(MealDailySpending $dailySpending)
+    {
+        return view('pettycash::spendings.meals.daily_edit', [
+            'dailySpending' => $dailySpending->load('respondents:id,name,phone'),
+            'respondents' => Respondent::query()
+                ->where(function ($query) use ($dailySpending) {
+                    $query->where('status', Respondent::STATUS_ACTIVE)
+                        ->orWhereIn('id', $dailySpending->respondents->pluck('id')->all());
+                })
+                ->orderBy('name')
+                ->get(['id', 'name', 'phone', 'status']),
+        ]);
+    }
+
+    public function update(Request $request, MealDailySpending $dailySpending)
+    {
+        if ($dailySpending->meal_payment_id) {
+            return back()->with('error', 'Paid daily bills cannot be edited directly. Edit the payment instead.');
+        }
+
+        $data = $request->validate([
             'spending_date' => ['required', 'date'],
             'amount' => ['required', 'numeric', 'min:0.01'],
-            'notes' => ['nullable', 'string', 'max:255'],
-            'involved_respondent_ids' => ['nullable', 'array'],
+            'notes' => ['required', 'string', 'max:255'],
+            'involved_respondent_ids' => ['required', 'array', 'min:1'],
             'involved_respondent_ids.*' => ['integer', 'exists:petty_respondents,id'],
         ]);
 
-        $row = MealDailySpending::query()->create([
-            'respondent_id' => null,
-            'spending_date' => $data['spending_date'],
-            'amount' => round((float) $data['amount'], 2),
-            'notes' => $data['notes'] ?? null,
-            'recorded_by' => auth('petty')->id(),
-        ]);
-
         $involvedIds = $this->normalizeIdList((array) ($data['involved_respondent_ids'] ?? []));
-        if (!empty($involvedIds)) {
-            $row->respondents()->sync($involvedIds);
+        $allowedIds = $dailySpending->respondents()->pluck('petty_respondents.id')->all();
+        $invalidRespondent = Respondent::query()
+            ->whereIn('id', $involvedIds)
+            ->get()
+            ->first(function (Respondent $respondent) use ($allowedIds) {
+                return !$respondent->isSelectableForSpending()
+                    && !in_array((int) $respondent->id, array_map('intval', $allowedIds), true);
+            });
+        if ($invalidRespondent) {
+            return back()->withErrors([
+                'involved_respondent_ids' => $invalidRespondent->name . ' is not active and cannot be newly assigned.',
+            ])->withInput();
         }
+
+        PettyDatabase::transaction(function () use ($dailySpending, $data, $involvedIds) {
+            $dailySpending->update([
+                'spending_date' => $data['spending_date'],
+                'amount' => round((float) $data['amount'], 2),
+                'notes' => $data['notes'],
+            ]);
+
+            $dailySpending->respondents()->sync($involvedIds);
+        });
 
         return redirect()
             ->route('petty.meals.daily.index', [
                 'from' => $data['spending_date'],
                 'to' => $data['spending_date'],
             ])
-            ->with('success', 'Daily meal bill saved.');
+            ->with('success', 'Daily meal bill updated.');
     }
 
     public function storePayment(Request $request)
@@ -201,9 +362,10 @@ class MealDailyController extends Controller
             'date' => ['required', 'date'],
             'reference' => ['required', 'string', 'max:255'],
             'transaction_cost' => ['nullable', 'numeric', 'min:0'],
-            'receiver_name' => ['nullable', 'string', 'max:255'],
-            'receiver_phone' => ['nullable', 'string', 'max:255'],
-            'notes' => ['nullable', 'string', 'max:255'],
+            'receiver_name' => ['required', 'string', 'max:255'],
+            'receiver_phone' => ['required', 'string', 'max:255'],
+            'notes' => ['required', 'string', 'max:255'],
+            'description_mode' => ['required', 'in:auto,manual'],
             'description' => ['nullable', 'string', 'max:255'],
         ]);
 
@@ -220,7 +382,7 @@ class MealDailyController extends Controller
         $allocator = app(FundsAllocatorService::class);
 
         try {
-            DB::transaction(function () use ($data, $selectedIds, $fee, $allocator) {
+            PettyDatabase::transaction(function () use ($data, $selectedIds, $fee, $allocator) {
                 $rows = $this->selectedDailyRows($selectedIds, true);
                 if ($rows->count() !== count($selectedIds)) {
                     throw new \RuntimeException('Some selected records are already paid or unavailable. Refresh and try again.');
@@ -243,18 +405,12 @@ class MealDailyController extends Controller
                     }
                 }
 
-                $description = trim((string) ($data['description'] ?? ''));
-                if ($description === '') {
-                    $description = 'Meal payment for ' . $stats['entries_count'] . ' record(s)';
-                    if (!empty($stats['range_from']) && !empty($stats['range_to'])) {
-                        $description .= ' (' . $stats['range_from'] . ' to ' . $stats['range_to'] . ')';
-                    }
-                }
+                $description = $this->resolveMealPaymentDescription($data, $stats);
 
                 $spending = Spending::query()->create([
                     'batch_id' => null,
                     'type' => 'meal',
-                    'sub_type' => 'daily_payment',
+                    'sub_type' => 'lunch',
                     'reference' => $data['reference'],
                     'amount' => $amount,
                     'transaction_cost' => $fee,
@@ -279,7 +435,7 @@ class MealDailyController extends Controller
                     'date' => $data['date'],
                     'receiver_name' => $data['receiver_name'] ?? null,
                     'receiver_phone' => $data['receiver_phone'] ?? null,
-                    'notes' => $data['notes'] ?? null,
+                    'notes' => $data['notes'],
                     'recorded_by' => auth('petty')->id(),
                 ]);
 
@@ -294,6 +450,108 @@ class MealDailyController extends Controller
         return redirect()
             ->route('petty.meals.daily.index')
             ->with('success', 'Meal payment recorded and balance updated.');
+    }
+
+    public function editPayment(MealPayment $payment)
+    {
+        $allocator = app(FundsAllocatorService::class);
+        $stats = $this->statsFromRows($payment->dailySpendings()->with(['respondent:id,name', 'respondents:id,name'])->get());
+
+        return view('pettycash::spendings.meals.payment_edit', [
+            'payment' => $payment->load('batch:id,batch_no', 'spending', 'dailySpendings.respondent:id,name', 'dailySpendings.respondents:id,name'),
+            'batches' => $allocator->batchesWithNetAvailable(),
+            'descriptionPreview' => $this->autoMealPaymentDescription($stats, round((float) $payment->amount, 2)),
+        ]);
+    }
+
+    public function updatePayment(Request $request, MealPayment $payment)
+    {
+        $data = $request->validate([
+            'batch_id' => ['required', 'integer', 'exists:petty_batches,id'],
+            'date' => ['required', 'date'],
+            'reference' => ['required', 'string', 'max:255'],
+            'amount' => ['required', 'numeric', 'min:0.01'],
+            'transaction_cost' => ['required', 'numeric', 'min:0'],
+            'receiver_name' => ['required', 'string', 'max:255'],
+            'receiver_phone' => ['required', 'string', 'max:255'],
+            'notes' => ['required', 'string', 'max:255'],
+            'description_mode' => ['required', 'in:auto,manual'],
+            'description' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $amount = round((float) $data['amount'], 2);
+        $fee = round((float) $data['transaction_cost'], 2);
+        $allocator = app(FundsAllocatorService::class);
+        $stats = $this->statsFromRows($payment->dailySpendings()->with(['respondent:id,name', 'respondents:id,name'])->get());
+        $description = $this->resolveMealPaymentDescription($data, $stats, $amount);
+
+        PettyDatabase::transaction(function () use ($payment, $data, $amount, $fee, $allocator, $description) {
+            $payment->update([
+                'batch_id' => (int) $data['batch_id'],
+                'date' => $data['date'],
+                'reference' => $data['reference'],
+                'amount' => $amount,
+                'transaction_cost' => $fee,
+                'receiver_name' => $data['receiver_name'],
+                'receiver_phone' => $data['receiver_phone'],
+                'notes' => $data['notes'],
+            ]);
+
+            if ($payment->spending_id) {
+                $spending = Spending::query()->lockForUpdate()->find($payment->spending_id);
+                if ($spending) {
+                    $spending->update([
+                        'reference' => $data['reference'],
+                        'amount' => $amount,
+                        'transaction_cost' => $fee,
+                        'date' => $data['date'],
+                        'description' => $description,
+                    ]);
+
+                    $allocator->forceAllocateToBatch($spending, $amount, $fee, (int) $data['batch_id']);
+                }
+            }
+        });
+
+        return redirect()
+            ->route('petty.meals.daily.index')
+            ->with('success', 'Meal payment updated.');
+    }
+
+    public function destroy(MealDailySpending $dailySpending)
+    {
+        abort_unless(PettyAccess::isAdmin(auth('petty')->user()), 403);
+
+        if ($dailySpending->meal_payment_id) {
+            return back()->with('error', 'Delete the linked payment first before deleting this bill row.');
+        }
+
+        $dailySpending->respondents()->detach();
+        $dailySpending->delete();
+
+        return redirect()->route('petty.meals.daily.index')->with('success', 'Daily meal bill deleted.');
+    }
+
+    public function destroyPayment(MealPayment $payment)
+    {
+        abort_unless(PettyAccess::isAdmin(auth('petty')->user()), 403);
+
+        PettyDatabase::transaction(function () use ($payment) {
+            MealDailySpending::query()
+                ->where('meal_payment_id', $payment->id)
+                ->update(['meal_payment_id' => null]);
+
+            if ($payment->spending_id) {
+                \App\Modules\PettyCash\Models\SpendingAllocation::query()
+                    ->where('spending_id', $payment->spending_id)
+                    ->delete();
+                Spending::query()->whereKey($payment->spending_id)->delete();
+            }
+
+            $payment->delete();
+        });
+
+        return redirect()->route('petty.meals.daily.index')->with('success', 'Meal payment deleted.');
     }
 
     /**
@@ -389,14 +647,61 @@ class MealDailyController extends Controller
         ];
     }
 
+    /**
+     * @param array<string,mixed> $data
+     * @param array{entries_count:int,days_count:int,amount:float,range_from:?string,range_to:?string,people:array<int,string>} $stats
+     */
+    private function resolveMealPaymentDescription(array $data, array $stats, ?float $overrideAmount = null): string
+    {
+        $mode = strtolower(trim((string) ($data['description_mode'] ?? '')));
+        if ($mode === 'manual') {
+            $description = trim((string) ($data['description'] ?? ''));
+            if ($description === '') {
+                throw ValidationException::withMessages([
+                    'description' => 'Type a manual description or choose auto description.',
+                ]);
+            }
+
+            return $description;
+        }
+
+        return $this->autoMealPaymentDescription($stats, $overrideAmount ?? (float) ($stats['amount'] ?? 0));
+    }
+
+    /**
+     * @param array{entries_count:int,days_count:int,amount:float,range_from:?string,range_to:?string,people:array<int,string>} $stats
+     */
+    private function autoMealPaymentDescription(array $stats, float $amount): string
+    {
+        $people = array_values(array_filter((array) ($stats['people'] ?? [])));
+        $peopleLabel = !empty($people) ? implode(', ', array_slice($people, 0, 3)) : 'selected respondents';
+        if (count($people) > 3) {
+            $peopleLabel .= ' +' . (count($people) - 3) . ' more';
+        }
+
+        $range = trim(implode(' to ', array_filter([
+            (string) ($stats['range_from'] ?? ''),
+            (string) ($stats['range_to'] ?? ''),
+        ])));
+
+        $parts = [
+            'Meal bill for ' . $peopleLabel,
+            ($range !== '' ? ('for ' . $range) : null),
+            ((int) ($stats['days_count'] ?? 0) > 0 ? ((int) $stats['days_count'] . ' day(s)') : null),
+            'total ' . number_format($amount, 2, '.', ''),
+        ];
+
+        return substr(implode(', ', array_filter($parts)), 0, 255);
+    }
+
     private function mealDailyTablesReady(): bool
     {
         static $ready = null;
 
         if ($ready === null) {
-            $ready = Schema::hasTable('petty_meal_daily_spendings')
-                && Schema::hasTable('petty_meal_payments')
-                && Schema::hasTable('petty_meal_daily_respondents');
+            $ready = PettyDatabase::schema()->hasTable('petty_meal_daily_spendings')
+                && PettyDatabase::schema()->hasTable('petty_meal_payments')
+                && PettyDatabase::schema()->hasTable('petty_meal_daily_respondents');
         }
 
         return $ready;
@@ -404,11 +709,11 @@ class MealDailyController extends Controller
 
     private function serviceSpentNetTotal(): float
     {
-        if (!Schema::hasTable('petty_bike_services')) {
+        if (!PettyDatabase::schema()->hasTable('petty_bike_services')) {
             return 0.0;
         }
 
-        $total = (float) DB::table('petty_bike_services')
+        $total = (float) PettyDatabase::table('petty_bike_services')
             ->selectRaw('COALESCE(SUM(amount + COALESCE(transaction_cost,0)),0) as t')
             ->value('t');
 

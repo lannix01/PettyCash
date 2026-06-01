@@ -160,3 +160,9 @@
     </tbody>
 </table>
 </div>
+
+@if($spendings instanceof \Illuminate\Contracts\Pagination\Paginator && method_exists($spendings, 'links'))
+    <div style="margin-top:12px">
+        {{ $spendings->onEachSide(1)->links('pettycash::partials.pagination') }}
+    </div>
+@endif

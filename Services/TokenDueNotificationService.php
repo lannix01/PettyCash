@@ -9,14 +9,16 @@ use App\Modules\PettyCash\Models\BikeService;
 use App\Modules\PettyCash\Models\PettyNotification;
 use App\Modules\PettyCash\Models\PettyNotificationAdminContact;
 use App\Modules\PettyCash\Models\PettyNotificationSetting;
+use App\Modules\PettyCash\Models\PettyUser;
 use App\Modules\PettyCash\Models\PettySmsTemplateUsage;
 use App\Modules\PettyCash\Models\Spending;
+use App\Modules\PettyCash\Support\PettyAccess;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use App\Services\Sms\AdvantaSmsService;
 use App\Services\Sms\AmazonsSmsService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Schema;
 
 class TokenDueNotificationService
 {
@@ -37,9 +39,6 @@ class TokenDueNotificationService
 
         $runtime = $this->runtimeSettings($cfg);
         $balances = $this->currentBalanceMetrics();
-
-        $emailEnabled = (bool)($cfg['email_enabled'] ?? true);
-        $emailRecipients = array_values(array_filter((array)($cfg['email_recipients'] ?? [])));
 
         $created = 0;
         $sentEmail = 0;
@@ -134,7 +133,8 @@ class TokenDueNotificationService
                 continue;
             }
 
-            if ($emailEnabled && !empty($emailRecipients)) {
+            $emailRecipients = $this->emailRecipientsForEvent($runtime, $cfg, $type);
+            if (!empty($emailRecipients)) {
                 try {
                     $this->sendInternalEmail($emailRecipients, $notif);
                     $notif->sent_email_at = now();
@@ -288,35 +288,52 @@ class TokenDueNotificationService
             return $result;
         }
 
+        $smsDebug = [];
+        $eventKey = 'due_tomorrow_shortfall';
+
+        $emailRecipients = $this->emailRecipientsForEvent($runtime, $cfg, $eventKey);
+        if (!empty($emailRecipients)) {
+            try {
+                $this->sendInternalEmail($emailRecipients, $notif);
+                $notif->sent_email_at = now();
+                $notif->save();
+            } catch (\Throwable $e) {
+                $notif->send_error = trim(($notif->send_error ?? '') . "\nEMAIL: " . $e->getMessage());
+                $notif->save();
+            }
+        }
+
         if (!$runtime['sms_enabled'] || empty($runtime['sms_recipients'])) {
             return $result;
         }
 
-        $template = $runtime['template_map']['due_tomorrow_shortfall'] ?? null;
-        $smsDebug = [];
-        $queue = [];
+        $template = $runtime['template_map'][$eventKey] ?? null;
+        $recipients = $this->recipientsForEvent($runtime, $eventKey);
+        if (!empty($recipients)) {
+            $queue = [];
 
-        foreach ($runtime['sms_recipients'] as $recipient) {
-            $context = $this->contextWithRecipient($summaryContext, $recipient);
-            $message = $this->renderTemplate($template, $context);
-            if (trim($message) === '') {
-                $message = $this->renderTemplate($fallbackMessage, $context);
+            foreach ($recipients as $recipient) {
+                $context = $this->contextWithRecipient($summaryContext, $recipient);
+                $message = $this->renderTemplate($template, $context);
+                if (trim($message) === '') {
+                    $message = $this->renderTemplate($fallbackMessage, $context);
+                }
+
+                $queue[] = [
+                    'phone' => (string)$recipient['phone'],
+                    'message' => $message,
+                    'notif_id' => $notif->id,
+                ];
             }
 
-            $queue[] = [
-                'phone' => (string)$recipient['phone'],
-                'message' => $message,
-                'notif_id' => $notif->id,
-            ];
-        }
+            $sent = $this->sendManySms($queue, (string)$runtime['sms_gateway'], $smsDebug);
+            $result['sent_sms'] = $sent;
+            $result['sms_debug_log'] = !empty($smsDebug) ? json_encode($smsDebug) : null;
 
-        $sent = $this->sendManySms($queue, (string)$runtime['sms_gateway'], $smsDebug);
-        $result['sent_sms'] = $sent;
-        $result['sms_debug_log'] = !empty($smsDebug) ? json_encode($smsDebug) : null;
-
-        if ($sent > 0) {
-            $notif->sent_sms_at = now();
-            $notif->save();
+            if ($sent > 0) {
+                $notif->sent_sms_at = now();
+                $notif->save();
+            }
         }
 
         return $result;
@@ -334,7 +351,7 @@ class TokenDueNotificationService
         }
 
         $settings = null;
-        if (Schema::hasTable('petty_notification_settings')) {
+        if (PettyDatabase::schema()->hasTable('petty_notification_settings')) {
             $settings = PettyNotificationSetting::current();
         }
 
@@ -346,17 +363,21 @@ class TokenDueNotificationService
         $smsEnabledConfig = (bool)($cfg['sms_enabled'] ?? true);
         $smsEnabledDb = $settings ? (bool)$settings->sms_enabled : true;
         $smsEnabled = $smsEnabledConfig && $smsEnabledDb;
+        $emailEnabledConfig = (bool)($cfg['email_enabled'] ?? true);
+        $emailEnabledDb = $settings ? (bool)($settings->email_enabled ?? true) : true;
+        $emailEnabled = $emailEnabledConfig && $emailEnabledDb;
 
         $smsRecipients = [];
-        if (Schema::hasTable('petty_notification_admin_contacts')) {
+        if (PettyDatabase::schema()->hasTable('petty_notification_admin_contacts')) {
             $smsRecipients = PettyNotificationAdminContact::query()
                 ->where('is_active', true)
                 ->orderBy('id')
-                ->get(['name', 'role', 'phone_no'])
+                ->get(['id', 'name', 'role', 'phone_no'])
                 ->map(function ($c) {
                     return [
+                        'id' => (int)$c->id,
                         'name' => (string)$c->name,
-                        'role' => (string)($c->role ?? ''),
+                        'role' => PettyAccess::normalizeRole((string)($c->role ?? '')),
                         'phone' => (string)$c->phone_no,
                     ];
                 })
@@ -377,6 +398,7 @@ class TokenDueNotificationService
         // Deduplicate recipients by normalized phone.
         $seen = [];
         $uniqueRecipients = [];
+        $recipientsById = [];
         foreach ($smsRecipients as $recipient) {
             $phone = $this->normalizePhone((string)($recipient['phone'] ?? ''));
             if ($phone === '' || isset($seen[$phone])) {
@@ -384,11 +406,32 @@ class TokenDueNotificationService
             }
             $seen[$phone] = true;
             $recipient['phone'] = $phone;
+            if (isset($recipient['id'])) {
+                $recipientsById[(int) $recipient['id']] = $recipient;
+            }
             $uniqueRecipients[] = $recipient;
         }
 
+        $emailRecipients = [];
+        if (PettyDatabase::schema()->hasTable('petty_users')) {
+            $emailRecipients = PettyUser::query()
+                ->where('is_active', true)
+                ->orderBy('id')
+                ->get(['id', 'name', 'email', 'role'])
+                ->filter(fn (PettyUser $user) => filter_var((string) $user->email, FILTER_VALIDATE_EMAIL))
+                ->map(function (PettyUser $user) {
+                    return [
+                        'id' => (int) $user->id,
+                        'name' => (string) $user->name,
+                        'role' => PettyAccess::normalizeRole((string) $user->role),
+                        'email' => strtolower(trim((string) $user->email)),
+                    ];
+                })
+                ->all();
+        }
+
         $templateMap = [];
-        if (Schema::hasTable('petty_sms_template_usages') && Schema::hasTable('petty_sms_templates')) {
+        if (PettyDatabase::schema()->hasTable('petty_sms_template_usages') && PettyDatabase::schema()->hasTable('petty_sms_templates')) {
             $templateMap = PettySmsTemplateUsage::query()
                 ->with('template')
                 ->get()
@@ -402,10 +445,19 @@ class TokenDueNotificationService
             'sms_mode' => $smsMode,
             'sms_gateway' => $smsGateway,
             'sms_enabled' => $smsEnabled,
+            'email_enabled' => $emailEnabled,
             'sms_recipients' => $uniqueRecipients,
+            'sms_recipients_by_id' => $recipientsById,
+            'sms_recipient_map' => (array) ($settings?->sms_recipient_map ?? []),
+            'sms_event_map' => $settings?->sms_event_map ?: PettyNotificationSetting::defaultSmsEventMap(),
+            'email_event_map' => $settings?->email_event_map ?: PettyNotificationSetting::defaultEmailEventMap(),
+            'sms_role_map' => $settings?->sms_role_map ?: PettyNotificationSetting::emptyRoleMap(),
+            'email_role_map' => $settings?->email_role_map ?: PettyNotificationSetting::emptyRoleMap(),
+            'email_recipients' => $emailRecipients,
             'template_map' => $templateMap,
             'low_balance_threshold' => (float)($settings?->low_balance_threshold ?? 0),
             'low_credit_threshold' => (float)($settings?->low_credit_threshold ?? 0),
+            'legacy_email_recipients' => array_values(array_filter((array)($cfg['email_recipients'] ?? []))),
         ];
     }
 
@@ -420,11 +472,8 @@ class TokenDueNotificationService
         $created = 0;
         $sentSms = 0;
 
-        if (empty($runtime['sms_recipients'])) {
-            return [$created, $sentSms];
-        }
-
-        if (!$runtime['sms_enabled']) {
+        if (empty($this->recipientsForEvent($runtime, 'low_balance')) && empty($this->recipientsForEvent($runtime, 'low_credit'))
+            && empty($this->emailRecipientsForEvent($runtime, [], 'low_balance')) && empty($this->emailRecipientsForEvent($runtime, [], 'low_credit'))) {
             return [$created, $sentSms];
         }
 
@@ -492,10 +541,30 @@ class TokenDueNotificationService
             return [$created, 0];
         }
 
+        $emailRecipients = $this->emailRecipientsForEvent($runtime, [], $event);
+        if (!empty($emailRecipients)) {
+            try {
+                $this->sendInternalEmail($emailRecipients, $notif);
+                $notif->sent_email_at = now();
+                $notif->save();
+            } catch (\Throwable $e) {
+                $notif->send_error = trim(($notif->send_error ?? '') . "\nEMAIL: " . $e->getMessage());
+                $notif->save();
+            }
+        }
+
+        if (!$runtime['sms_enabled']) {
+            return [$created, 0];
+        }
+
         $template = $runtime['template_map'][$event] ?? null;
+        $recipients = $this->recipientsForEvent($runtime, $event);
+        if (empty($recipients)) {
+            return [$created, 0];
+        }
 
         $queue = [];
-        foreach ($runtime['sms_recipients'] as $recipient) {
+        foreach ($recipients as $recipient) {
             $context = $this->contextWithRecipient($summaryContext, $recipient);
 
             $message = $this->renderTemplate($template, $context);
@@ -619,6 +688,15 @@ class TokenDueNotificationService
                 continue;
             }
 
+            $eventRecipients = $this->recipientsForEvent([
+                'sms_recipients' => $recipients,
+                'sms_recipients_by_id' => $runtime['sms_recipients_by_id'] ?? [],
+                'sms_recipient_map' => $runtime['sms_recipient_map'] ?? [],
+            ], $eventKey);
+            if (empty($eventRecipients)) {
+                continue;
+            }
+
             $defaultText = $this->buildSummaryText($eventKey, $items);
             if (trim($defaultText) === '') {
                 continue;
@@ -626,7 +704,7 @@ class TokenDueNotificationService
 
             $template = $templateMap[$eventKey] ?? null;
             $queue = [];
-            foreach ($recipients as $recipient) {
+            foreach ($eventRecipients as $recipient) {
                 $context = $this->contextWithRecipient($summaryContext, $recipient);
 
                 $message = $this->renderTemplate($template, $context);
@@ -656,6 +734,128 @@ class TokenDueNotificationService
         }
 
         return $totalSent;
+    }
+
+    /**
+     * @param array<string,mixed> $runtime
+     * @return array<int,array{name:string,role:string,phone:string}>
+     */
+    private function recipientsForEvent(array $runtime, string $eventKey): array
+    {
+        if (!$this->eventEnabled($runtime, 'sms', $eventKey)) {
+            return [];
+        }
+
+        $allRecipients = array_values((array) ($runtime['sms_recipients'] ?? []));
+        $roleMap = (array) ($runtime['sms_role_map'] ?? []);
+        $recipientMap = (array) ($runtime['sms_recipient_map'] ?? []);
+        $recipientsById = (array) ($runtime['sms_recipients_by_id'] ?? []);
+
+        $filteredRecipients = $allRecipients;
+        $selectedRoles = array_values(array_unique(array_filter(array_map(
+            fn ($role) => PettyAccess::normalizeRole((string) $role),
+            (array) ($roleMap[$eventKey] ?? [])
+        ))));
+
+        if (!empty($selectedRoles)) {
+            $roleLookup = array_fill_keys($selectedRoles, true);
+            $filteredRecipients = array_values(array_filter($filteredRecipients, function (array $recipient) use ($roleLookup) {
+                $role = PettyAccess::normalizeRole((string) ($recipient['role'] ?? ''));
+                return isset($roleLookup[$role]);
+            }));
+        }
+
+        if (!array_key_exists($eventKey, $recipientMap)) {
+            return $filteredRecipients;
+        }
+
+        $selectedIds = array_values(array_unique(array_map('intval', (array) $recipientMap[$eventKey])));
+        if (empty($selectedIds)) {
+            return [];
+        }
+
+        $selectedRecipients = [];
+        $selectedLookup = [];
+        foreach ($filteredRecipients as $recipient) {
+            if (isset($recipient['id'])) {
+                $selectedLookup[(int) $recipient['id']] = $recipient;
+            }
+        }
+        foreach ($selectedIds as $id) {
+            if (isset($selectedLookup[$id])) {
+                $selectedRecipients[] = $selectedLookup[$id];
+            } elseif (isset($recipientsById[$id]) && empty($selectedRoles)) {
+                $selectedRecipients[] = $recipientsById[$id];
+            }
+        }
+
+        return $selectedRecipients;
+    }
+
+    /**
+     * @param array<string,mixed> $runtime
+     * @param array<string,mixed> $cfg
+     * @return array<int,string>
+     */
+    private function emailRecipientsForEvent(array $runtime, array $cfg, string $eventKey): array
+    {
+        if (!$this->eventEnabled($runtime, 'email', $eventKey)) {
+            return [];
+        }
+
+        $selectedRoles = array_values(array_unique(array_filter(array_map(
+            fn ($role) => PettyAccess::normalizeRole((string) $role),
+            (array) (($runtime['email_role_map'] ?? [])[$eventKey] ?? [])
+        ))));
+
+        $emails = [];
+        if (!empty($selectedRoles)) {
+            $roleLookup = array_fill_keys($selectedRoles, true);
+            foreach ((array) ($runtime['email_recipients'] ?? []) as $recipient) {
+                $role = PettyAccess::normalizeRole((string) ($recipient['role'] ?? ''));
+                $email = strtolower(trim((string) ($recipient['email'] ?? '')));
+                if ($email !== '' && isset($roleLookup[$role])) {
+                    $emails[$email] = $email;
+                }
+            }
+        }
+
+        if (empty($emails)) {
+            foreach ((array) ($runtime['legacy_email_recipients'] ?? $cfg['email_recipients'] ?? []) as $email) {
+                $normalized = strtolower(trim((string) $email));
+                if (filter_var($normalized, FILTER_VALIDATE_EMAIL)) {
+                    $emails[$normalized] = $normalized;
+                }
+            }
+        }
+
+        return array_values($emails);
+    }
+
+    /**
+     * @param array<string,mixed> $runtime
+     */
+    private function eventEnabled(array $runtime, string $channel, string $eventKey): bool
+    {
+        $map = $channel === 'email'
+            ? (array) ($runtime['email_event_map'] ?? [])
+            : (array) ($runtime['sms_event_map'] ?? []);
+
+        $globalEnabled = $channel === 'email'
+            ? (bool) ($runtime['email_enabled'] ?? true)
+            : (bool) ($runtime['sms_enabled'] ?? true);
+
+        if (!$globalEnabled) {
+            return false;
+        }
+
+        if (!array_key_exists($eventKey, $map)) {
+            return $channel === 'email'
+                ? (bool) (PettyNotificationSetting::defaultEmailEventMap()[$eventKey] ?? false)
+                : (bool) (PettyNotificationSetting::defaultSmsEventMap()[$eventKey] ?? true);
+        }
+
+        return (bool) $map[$eventKey];
     }
 
     /**
@@ -970,7 +1170,7 @@ class TokenDueNotificationService
             })
             ->select('petty_hostels.*', 'lp.last_payment_date');
 
-        if (Schema::hasColumn('petty_hostels', 'agreement_terminated_at')) {
+        if (PettyDatabase::schema()->hasColumn('petty_hostels', 'agreement_terminated_at')) {
             $hostelsQuery->whereNull('petty_hostels.agreement_terminated_at');
         }
 

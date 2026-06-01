@@ -2,10 +2,13 @@
 
 namespace App\Modules\PettyCash\Models;
 
+use App\Modules\PettyCash\Support\UsesPettyConnection;
 use Illuminate\Database\Eloquent\Model;
 
 class Payment extends Model
 {
+    use UsesPettyConnection;
+
     protected $table = 'petty_payments';
 
    protected $fillable = [
@@ -35,6 +38,11 @@ class Payment extends Model
 public function batch()
 {
     return $this->belongsTo(\App\Modules\PettyCash\Models\Batch::class, 'batch_id');
+}
+
+public function hostel()
+{
+    return $this->belongsTo(\App\Modules\PettyCash\Models\Hostel::class, 'hostel_id');
 }
 
 public function spending()

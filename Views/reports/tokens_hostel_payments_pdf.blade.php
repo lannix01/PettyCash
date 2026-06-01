@@ -16,7 +16,10 @@
 <body>
     <h2>Hostel Payments: {{ $hostel->hostel_name }}</h2>
     <div class="muted">
-        Meter: {{ $hostel->meter_no }} | Phone: {{ $hostel->phone_no }} |
+        Meter Number: {{ $hostel->meter_no }} | Phone Number: {{ $hostel->phone_no }} |
+        @if(!empty($hasFamilyRows))
+            Includes child hostel activity |
+        @endif
         Generated: {{ $generatedAt }}
     </div>
 
@@ -24,6 +27,9 @@
         <thead>
         <tr>
             <th>Date</th>
+            @if(!empty($hasFamilyRows))
+                <th>Hostel</th>
+            @endif
             <th>Reference</th>
             <th>Receiver</th>
             <th>Notes</th>
@@ -34,6 +40,9 @@
         @foreach($payments as $p)
             <tr>
                 <td>{{ $p->date?->format('Y-m-d') }}</td>
+                @if(!empty($hasFamilyRows))
+                    <td>{{ $p->hostel?->hostel_name ?? ('Hostel #' . $p->hostel_id) }}</td>
+                @endif
                 <td>{{ $p->reference }}</td>
                 <td>{{ $p->receiver_name }} {{ $p->receiver_phone ? '('.$p->receiver_phone.')' : '' }}</td>
                 <td>{{ $p->notes }}</td>
@@ -41,7 +50,7 @@
             </tr>
         @endforeach
         <tr>
-            <td colspan="4" class="total right">TOTAL</td>
+            <td colspan="{{ !empty($hasFamilyRows) ? 5 : 4 }}" class="total right">TOTAL</td>
             <td class="total right">{{ number_format((float)$total, 2) }}</td>
         </tr>
         </tbody>

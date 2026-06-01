@@ -244,6 +244,7 @@
                         <div class="panel-note">
                             Select page-level actions this user can perform. If an action is unchecked, the route is blocked and hidden in key views.
                             View access is automatically enabled when you grant any non-view action on that same page.
+                            Dashboard mini cards and breakdown widgets can now be granted separately under Dashboard.
                         </div>
 
                         <div class="perm-grid">

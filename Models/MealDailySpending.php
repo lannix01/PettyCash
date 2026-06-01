@@ -2,10 +2,13 @@
 
 namespace App\Modules\PettyCash\Models;
 
+use App\Modules\PettyCash\Support\UsesPettyConnection;
 use Illuminate\Database\Eloquent\Model;
 
 class MealDailySpending extends Model
 {
+    use UsesPettyConnection;
+
     protected $table = 'petty_meal_daily_spendings';
 
     protected $fillable = [

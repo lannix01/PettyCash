@@ -3,13 +3,14 @@
 namespace App\Modules\PettyCash\Controllers\Spending;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use App\Modules\PettyCash\Models\Batch;
 use App\Modules\PettyCash\Models\Spending;
 use App\Modules\PettyCash\Services\FundsAllocatorService;
+use App\Modules\PettyCash\Support\PettyAccess;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use App\Modules\PettyCash\Support\TabularExport;
+use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
 
 class MealController extends Controller
@@ -19,31 +20,44 @@ class MealController extends Controller
         $from = $request->query('from');
         $to = $request->query('to');
         $batchId = $request->query('batch_id');
+        $q = trim((string) $request->query('q', ''));
+        $sort = strtolower(trim((string) $request->query('sort', 'date_desc')));
+        $allowedSorts = ['date_desc', 'date_asc', 'amount_desc', 'amount_asc'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'date_desc';
+        }
 
         $listQuery = Spending::with(['batch', 'allocations.batch'])
             ->where('type', 'meal')
-            ->where('sub_type', 'lunch')
+            ->whereIn('sub_type', ['lunch', 'daily_payment'])
             ->when($batchId, fn($q) => $q->whereHas('allocations', fn($a) => $a->where('batch_id', $batchId)))
             ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
             ->when($to, fn($q) => $q->whereDate('date', '<=', $to))
-            ->orderByDesc('date')
-            ->orderByDesc('id');
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    $inner->where('reference', 'like', '%' . $q . '%')
+                        ->orWhere('description', 'like', '%' . $q . '%')
+                        ->orWhereHas('batch', fn ($batch) => $batch->where('batch_no', 'like', '%' . $q . '%'));
+                });
+            });
+
+        match ($sort) {
+            'date_asc' => $listQuery->orderBy('date')->orderBy('id'),
+            'amount_desc' => $listQuery->orderByDesc('amount')->orderByDesc('date')->orderByDesc('id'),
+            'amount_asc' => $listQuery->orderBy('amount')->orderByDesc('date')->orderByDesc('id'),
+            default => $listQuery->orderByDesc('date')->orderByDesc('id'),
+        };
 
         $meals = $listQuery->paginate(20)->withQueryString();
 
-        $total = (float) DB::table('petty_spending_allocations')
-            ->join('petty_spendings', 'petty_spendings.id', '=', 'petty_spending_allocations.spending_id')
-            ->where('petty_spendings.type', 'meal')
-            ->where('petty_spendings.sub_type', 'lunch')
-            ->when($batchId, fn($q) => $q->where('petty_spending_allocations.batch_id', $batchId))
-            ->when($from, fn($q) => $q->whereDate('petty_spendings.date', '>=', $from))
-            ->when($to, fn($q) => $q->whereDate('petty_spendings.date', '<=', $to))
-            ->selectRaw('COALESCE(SUM(petty_spending_allocations.amount + petty_spending_allocations.transaction_cost),0) as t')
-            ->value('t');
+        $total = (float) (clone $listQuery)
+            ->reorder()
+            ->selectRaw('COALESCE(SUM(amount + COALESCE(transaction_cost, 0)), 0) as total_amount')
+            ->value('total_amount');
 
         $batches = Batch::orderByDesc('id')->limit(50)->get();
 
-        return view('pettycash::spendings.meals.index', compact('meals', 'total', 'from', 'to', 'batchId', 'batches'));
+        return view('pettycash::spendings.meals.index', compact('meals', 'total', 'from', 'to', 'batchId', 'batches', 'q', 'sort'));
     }
 
     public function create(Request $request)
@@ -69,7 +83,7 @@ class MealController extends Controller
             'transaction_cost' => ['nullable', 'numeric', 'min:0'],
 
             'date' => ['nullable', 'date'],
-            'description' => ['nullable', 'string', 'max:255'],
+            'description' => ['required', 'string', 'max:255'],
 
             'mass' => ['nullable', 'boolean'],
             'range_from' => ['nullable', 'date'],
@@ -121,7 +135,7 @@ class MealController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($data, $dates, $amount, $fee, $allocator) {
+            PettyDatabase::transaction(function () use ($data, $dates, $amount, $fee, $allocator) {
                 foreach ($dates as $d) {
                     $sp = Spending::create([
                         'batch_id' => null,
@@ -131,7 +145,7 @@ class MealController extends Controller
                         'amount' => $amount,
                         'transaction_cost' => $fee,
                         'date' => $d,
-                        'description' => $data['description'] ?? null,
+                        'description' => $data['description'],
                     ]);
 
                     $onlyBatch = ($data['funding'] === 'single') ? (int)$data['batch_id'] : null;
@@ -154,15 +168,35 @@ class MealController extends Controller
         $from = $request->query('from');
         $to = $request->query('to');
         $batchId = $request->query('batch_id');
+        $q = trim((string) $request->query('q', ''));
+        $sort = strtolower(trim((string) $request->query('sort', 'date_desc')));
+        $allowedSorts = ['date_desc', 'date_asc', 'amount_desc', 'amount_asc'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'date_desc';
+        }
 
-        $meals = Spending::with(['batch', 'allocations.batch'])
+        $mealsQuery = Spending::with(['batch', 'allocations.batch'])
             ->where('type', 'meal')
-            ->where('sub_type', 'lunch')
+            ->whereIn('sub_type', ['lunch', 'daily_payment'])
             ->when($batchId, fn($q) => $q->whereHas('allocations', fn($a) => $a->where('batch_id', $batchId)))
             ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
             ->when($to, fn($q) => $q->whereDate('date', '<=', $to))
-            ->orderByDesc('date')
-            ->get();
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    $inner->where('reference', 'like', '%' . $q . '%')
+                        ->orWhere('description', 'like', '%' . $q . '%')
+                        ->orWhereHas('batch', fn ($batch) => $batch->where('batch_no', 'like', '%' . $q . '%'));
+                });
+            });
+
+        match ($sort) {
+            'date_asc' => $mealsQuery->orderBy('date')->orderBy('id'),
+            'amount_desc' => $mealsQuery->orderByDesc('amount')->orderByDesc('date')->orderByDesc('id'),
+            'amount_asc' => $mealsQuery->orderBy('amount')->orderByDesc('date')->orderByDesc('id'),
+            default => $mealsQuery->orderByDesc('date')->orderByDesc('id'),
+        };
+
+        $meals = $mealsQuery->get();
 
         if (in_array($format, ['csv', 'excel', 'xls', 'xlsx'], true)) {
             $rows = $meals->map(function ($m) {
@@ -204,15 +238,10 @@ class MealController extends Controller
             );
         }
 
-        $total = (float) DB::table('petty_spending_allocations')
-            ->join('petty_spendings', 'petty_spendings.id', '=', 'petty_spending_allocations.spending_id')
-            ->where('petty_spendings.type', 'meal')
-            ->where('petty_spendings.sub_type', 'lunch')
-            ->when($batchId, fn($q) => $q->where('petty_spending_allocations.batch_id', $batchId))
-            ->when($from, fn($q) => $q->whereDate('petty_spendings.date', '>=', $from))
-            ->when($to, fn($q) => $q->whereDate('petty_spendings.date', '<=', $to))
-            ->selectRaw('COALESCE(SUM(petty_spending_allocations.amount + petty_spending_allocations.transaction_cost),0) as t')
-            ->value('t');
+        $total = (float) (clone $mealsQuery)
+            ->reorder()
+            ->selectRaw('COALESCE(SUM(amount + COALESCE(transaction_cost, 0)), 0) as total_amount')
+            ->value('total_amount');
 
         $pdf = Pdf::loadView('pettycash::reports.meals_pdf', [
             'meals' => $meals,
@@ -227,7 +256,7 @@ class MealController extends Controller
 
     public function edit(Spending $spending)
     {
-        abort_unless($spending->type === 'meal' && $spending->sub_type === 'lunch', 404);
+        abort_unless($spending->type === 'meal' && in_array((string) $spending->sub_type, ['lunch', 'daily_payment'], true), 404);
 
         $allocator = app(FundsAllocatorService::class);
         $batches = $allocator->batchesWithNetAvailable();
@@ -237,7 +266,7 @@ class MealController extends Controller
 
     public function update(Request $request, Spending $spending)
     {
-        abort_unless($spending->type === 'meal' && $spending->sub_type === 'lunch', 404);
+        abort_unless($spending->type === 'meal' && in_array((string) $spending->sub_type, ['lunch', 'daily_payment'], true), 404);
 
         $data = $request->validate([
             'batch_id' => ['required', 'integer', 'exists:petty_batches,id'],
@@ -245,7 +274,7 @@ class MealController extends Controller
             'amount' => ['required', 'numeric', 'min:0.01'],
             'transaction_cost' => ['nullable', 'numeric', 'min:0'],
             'date' => ['required', 'date'],
-            'description' => ['nullable', 'string', 'max:255'],
+            'description' => ['required', 'string', 'max:255'],
         ]);
 
         $amount = (float) $data['amount'];
@@ -253,21 +282,36 @@ class MealController extends Controller
         $allocator = app(FundsAllocatorService::class);
 
         try {
-            DB::transaction(function () use ($spending, $data, $amount, $fee, $allocator) {
+            PettyDatabase::transaction(function () use ($spending, $data, $amount, $fee, $allocator) {
                 $spending->update([
                     'reference' => $data['reference'],
                     'amount' => $amount,
                     'transaction_cost' => $fee,
                     'date' => $data['date'],
-                    'description' => $data['description'] ?? null,
+                    'description' => $data['description'],
                 ]);
 
-                $allocator->allocateSmallestFirst($spending, $amount, $fee, (int) $data['batch_id']);
+                $allocator->forceAllocateToBatch($spending, $amount, $fee, (int) $data['batch_id']);
             });
         } catch (\Throwable $e) {
             return back()->withErrors(['amount' => $e->getMessage()])->withInput();
         }
 
         return redirect()->route('petty.meals.index')->with('success', 'Meal updated.');
+    }
+
+    public function destroy(Spending $spending)
+    {
+        abort_unless(PettyAccess::isAdmin(auth('petty')->user()), 403);
+        abort_unless($spending->type === 'meal' && in_array((string) $spending->sub_type, ['lunch', 'daily_payment'], true), 404);
+
+        PettyDatabase::transaction(function () use ($spending) {
+            \App\Modules\PettyCash\Models\SpendingAllocation::query()
+                ->where('spending_id', $spending->id)
+                ->delete();
+            $spending->delete();
+        });
+
+        return redirect()->route('petty.meals.index')->with('success', 'Meal spending deleted.');
     }
 }

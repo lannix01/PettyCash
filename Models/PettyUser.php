@@ -2,12 +2,14 @@
 
 namespace App\Modules\PettyCash\Models;
 
+use App\Modules\PettyCash\Support\UsesPettyConnection;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
 class PettyUser extends Authenticatable
 {
     use Notifiable;
+    use UsesPettyConnection;
 
     protected $table = 'petty_users';
 

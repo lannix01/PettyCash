@@ -7,11 +7,11 @@ use App\Modules\PettyCash\Models\PettyApiToken;
 use App\Modules\PettyCash\Models\PettyNotificationSetting;
 use App\Modules\PettyCash\Models\PettyUser;
 use App\Modules\PettyCash\Support\PettyAccess;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use App\Services\Sms\AdvantaSmsService;
 use App\Services\Sms\AmazonsSmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class ProfileController extends Controller
@@ -22,8 +22,8 @@ class ProfileController extends Controller
         abort_unless($currentUser, 403);
 
         $isAdmin = PettyAccess::isAdmin($currentUser);
-        $supportsPhoneNo = Schema::hasColumn('petty_users', 'phone_no');
-        $supportsLoginSmsTracking = Schema::hasColumn('petty_users', 'login_sms_sent_at');
+        $supportsPhoneNo = PettyDatabase::schema()->hasColumn('petty_users', 'phone_no');
+        $supportsLoginSmsTracking = PettyDatabase::schema()->hasColumn('petty_users', 'login_sms_sent_at');
 
         $users = collect();
         $otherUsers = collect();
@@ -107,7 +107,7 @@ class ProfileController extends Controller
         $currentUser = auth('petty')->user();
         abort_unless($currentUser && PettyAccess::isAdmin($currentUser), 403);
 
-        if (!Schema::hasColumn('petty_users', 'phone_no')) {
+        if (!PettyDatabase::schema()->hasColumn('petty_users', 'phone_no')) {
             return back()->with('error', 'User phone field is missing. Run migrations first.');
         }
 
@@ -142,7 +142,7 @@ class ProfileController extends Controller
         );
 
         $oldPasswordHash = (string) $user->password;
-        $hasLoginSmsTracking = Schema::hasColumn('petty_users', 'login_sms_sent_at');
+        $hasLoginSmsTracking = PettyDatabase::schema()->hasColumn('petty_users', 'login_sms_sent_at');
         $oldSmsSentAt = $hasLoginSmsTracking ? $user->login_sms_sent_at : null;
 
         $user->password = Hash::make($temporaryPassword);

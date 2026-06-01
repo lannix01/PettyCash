@@ -17,6 +17,7 @@ use App\Modules\PettyCash\Controllers\LedgerController;
 use App\Modules\PettyCash\Controllers\NotificationsController;
 use App\Modules\PettyCash\Controllers\ProfileController;
 use App\Modules\PettyCash\Controllers\SettingsController;
+use App\Modules\PettyCash\Controllers\TokenGatewayController;
 
 
 
@@ -73,12 +74,36 @@ Route::get('/spendings/meals/pdf', [MealController::class, 'pdf'])->name('petty.
 Route::get('/spendings/meals/daily', [MealDailyController::class, 'index'])->name('petty.meals.daily.index');
 Route::get('/spendings/meals/daily/calculate', [MealDailyController::class, 'calculate'])->name('petty.meals.daily.calculate');
 Route::post('/spendings/meals/daily', [MealDailyController::class, 'storeDaily'])->name('petty.meals.daily.store');
+Route::get('/spendings/meals/daily/{dailySpending}/edit', [MealDailyController::class, 'edit'])->name('petty.meals.daily.edit');
+Route::put('/spendings/meals/daily/{dailySpending}', [MealDailyController::class, 'update'])->name('petty.meals.daily.update');
+Route::delete('/spendings/meals/daily/{dailySpending}', [MealDailyController::class, 'destroy'])->name('petty.meals.daily.destroy');
 Route::post('/spendings/meals/daily/payments', [MealDailyController::class, 'storePayment'])->name('petty.meals.daily.payments.store');
+Route::get('/spendings/meals/daily/payments/{payment}/edit', [MealDailyController::class, 'editPayment'])->name('petty.meals.daily.payments.edit');
+Route::put('/spendings/meals/daily/payments/{payment}', [MealDailyController::class, 'updatePayment'])->name('petty.meals.daily.payments.update');
+Route::delete('/spendings/meals/daily/payments/{payment}', [MealDailyController::class, 'destroyPayment'])->name('petty.meals.daily.payments.destroy');
 
 
 
 // Token/Hostels
 Route::get('/spendings/tokens', [TokenController::class, 'index'])->name('petty.tokens.index');
+Route::post('/spendings/tokens/agreements/apply-history', [TokenController::class, 'applyAgreementHistorySuggestions'])->name('petty.tokens.agreements.apply_history');
+Route::get('/spendings/tokens/gateway', [TokenGatewayController::class, 'index'])->name('petty.tokens.gateway.index');
+Route::get('/spendings/tokens/gateway/create', [TokenGatewayController::class, 'create'])->name('petty.tokens.gateway.create');
+Route::post('/spendings/tokens/gateway', [TokenGatewayController::class, 'store'])->name('petty.tokens.gateway.store');
+Route::post('/spendings/tokens/gateway/devices', [TokenGatewayController::class, 'storeDevice'])->name('petty.tokens.gateway.devices.store');
+Route::match(['put', 'patch'], '/spendings/tokens/gateway/devices/{device}', [TokenGatewayController::class, 'updateDevice'])->name('petty.tokens.gateway.devices.update');
+Route::delete('/spendings/tokens/gateway/devices/{device}', [TokenGatewayController::class, 'destroyDevice'])->name('petty.tokens.gateway.devices.destroy');
+Route::post('/spendings/tokens/gateway/devices/{device}/activate', [TokenGatewayController::class, 'activateDevice'])->name('petty.tokens.gateway.devices.activate');
+Route::post('/spendings/tokens/gateway/test-sms', [TokenGatewayController::class, 'testSms'])->name('petty.tokens.gateway.test_sms');
+Route::post('/spendings/tokens/hostels/{hostel}/gateway-pay', [TokenGatewayController::class, 'quickPayFromHostel'])->name('petty.tokens.hostels.gateway_pay');
+Route::get('/spendings/tokens/gateway/{requestRecord}', [TokenGatewayController::class, 'show'])->name('petty.tokens.gateway.show');
+Route::post('/spendings/tokens/gateway/{requestRecord}/send', [TokenGatewayController::class, 'send'])->name('petty.tokens.gateway.send');
+Route::post('/spendings/tokens/gateway/{requestRecord}/refresh-check', [TokenGatewayController::class, 'refreshCheck'])->name('petty.tokens.gateway.refresh_check');
+Route::post('/spendings/tokens/gateway/{requestRecord}/confirm', [TokenGatewayController::class, 'confirm'])->name('petty.tokens.gateway.confirm');
+Route::post('/spendings/tokens/gateway/{requestRecord}/queue-customer-sms', [TokenGatewayController::class, 'queueCustomerSms'])->name('petty.tokens.gateway.queue_customer_sms');
+Route::post('/spendings/tokens/gateway/{requestRecord}/manual-link', [TokenGatewayController::class, 'manualLink'])->name('petty.tokens.gateway.manual_link');
+Route::post('/spendings/tokens/gateway/{requestRecord}/retry', [TokenGatewayController::class, 'retry'])->name('petty.tokens.gateway.retry');
+Route::post('/spendings/tokens/gateway/{requestRecord}/cancel', [TokenGatewayController::class, 'cancel'])->name('petty.tokens.gateway.cancel');
 Route::get('/spendings/tokens/create', [TokenController::class, 'create'])->name('petty.tokens.create');
 Route::get('/spendings/tokens/onts/search', [TokenController::class, 'searchOnts'])->name('petty.tokens.onts.search');
 Route::get('/spendings/tokens/hostels/search', [TokenController::class, 'searchHostels'])->name('petty.tokens.hostels.search');
@@ -88,13 +113,17 @@ Route::put('/spendings/tokens/hostels/{hostel}/agreement', [TokenController::cla
 Route::post('/spendings/tokens/hostels/{hostel}/agreement/terminate', [TokenController::class, 'terminateAgreement'])->name('petty.tokens.hostels.agreement.terminate');
 
 Route::get('/spendings/tokens/hostels/{hostel}', [TokenController::class, 'showHostel'])->name('petty.tokens.hostels.show');
+Route::post('/spendings/tokens/hostels/{hostel}/qr/generate', [TokenController::class, 'generateHostelQr'])->name('petty.tokens.hostels.qr.generate');
+Route::get('/spendings/tokens/hostels/{hostel}/qr/download', [TokenController::class, 'downloadHostelQr'])->name('petty.tokens.hostels.qr.download');
 Route::put('/spendings/tokens/hostels/{hostel}', [TokenController::class, 'updateHostel'])->name('petty.tokens.hostels.update');
 Route::post('/spendings/tokens/hostels/{hostel}/merge-ont', [TokenController::class, 'mergeHostelOnt'])->name('petty.tokens.hostels.merge_ont');
 Route::post('/spendings/tokens/hostels/{hostel}/refresh-ont-sn', [TokenController::class, 'refreshHostelOntSn'])->name('petty.tokens.hostels.refresh_ont_sn');
 Route::post('/spendings/tokens/hostels/{hostel}/payments', [TokenController::class, 'storePayment'])->name('petty.tokens.payments.store');
+Route::post('/spendings/tokens/hostels/{hostel}/payments/helper-sync', [TokenController::class, 'syncHelperPayments'])->name('petty.tokens.payments.helper_sync');
 Route::post('/spendings/tokens/hostels/{hostel}/overpay/apply', [TokenController::class, 'applyOverpay'])->name('petty.tokens.hostels.overpay.apply');
 Route::post('/spendings/tokens/hostels/{hostel}/pending-credits', [TokenController::class, 'storePendingCredit'])->name('petty.tokens.hostels.pending_credits.store');
 Route::post('/spendings/tokens/hostels/{hostel}/pending-credits/{credit}/sort', [TokenController::class, 'sortPendingCredit'])->name('petty.tokens.hostels.pending_credits.sort');
+Route::post('/spendings/tokens/hostels/{hostel}/children/{child}/detach', [TokenController::class, 'detachChildHostel'])->name('petty.tokens.hostels.children.detach');
 
 // PDFs
 Route::get('/spendings/tokens/pdf', [TokenController::class, 'pdfHostels'])->name('petty.tokens.pdf');
@@ -133,6 +162,7 @@ Route::get('/bikes-master/create', [BikeMasterController::class, 'create'])->nam
 Route::post('/bikes-master', [BikeMasterController::class, 'store'])->name('petty.bikes_master.store');
 Route::get('/bikes-master/{bike}/edit', [BikeMasterController::class, 'edit'])->name('petty.bikes_master.edit');
 Route::put('/bikes-master/{bike}', [BikeMasterController::class, 'update'])->name('petty.bikes_master.update');
+Route::delete('/bikes-master/{bike}', [BikeMasterController::class, 'destroy'])->name('petty.bikes_master.destroy');
 
 Route::get('/respondents', [RespondentController::class, 'index'])->name('petty.respondents.index');
 Route::get('/respondents/create', [RespondentController::class, 'create'])->name('petty.respondents.create');
@@ -140,6 +170,7 @@ Route::post('/respondents', [RespondentController::class, 'store'])->name('petty
 Route::get('/respondents/{respondent}', [RespondentController::class, 'show'])->name('petty.respondents.show');
 Route::get('/respondents/{respondent}/edit', [RespondentController::class, 'edit'])->name('petty.respondents.edit');
 Route::put('/respondents/{respondent}', [RespondentController::class, 'update'])->name('petty.respondents.update');
+Route::delete('/respondents/{respondent}', [RespondentController::class, 'destroy'])->name('petty.respondents.destroy');
 Route::post('/respondents/{respondent}/card/generate', [RespondentController::class, 'generateCard'])->name('petty.respondents.card.generate');
 Route::post('/respondents/{respondent}/card/sms', [RespondentController::class, 'sendCardLinkSms'])->name('petty.respondents.card.sms');
 
@@ -147,22 +178,27 @@ Route::post('/respondents/{respondent}/card/sms', [RespondentController::class, 
 // Credits edit
 Route::get('/credits/{credit}/edit', [\App\Modules\PettyCash\Controllers\CreditController::class, 'edit'])->name('petty.credits.edit');
 Route::put('/credits/{credit}', [\App\Modules\PettyCash\Controllers\CreditController::class, 'update'])->name('petty.credits.update');
+Route::delete('/credits/{credit}', [\App\Modules\PettyCash\Controllers\CreditController::class, 'destroy'])->name('petty.credits.destroy');
 
 // Bike spendings edit
 Route::get('/spendings/bikes/{spending}/edit', [\App\Modules\PettyCash\Controllers\Spending\BikeController::class, 'edit'])->name('petty.bikes.edit');
 Route::put('/spendings/bikes/{spending}', [\App\Modules\PettyCash\Controllers\Spending\BikeController::class, 'update'])->name('petty.bikes.update');
+Route::delete('/spendings/bikes/{spending}', [\App\Modules\PettyCash\Controllers\Spending\BikeController::class, 'destroy'])->name('petty.bikes.destroy');
 
 // Meals edit
 Route::get('/spendings/meals/{spending}/edit', [\App\Modules\PettyCash\Controllers\Spending\MealController::class, 'edit'])->name('petty.meals.edit');
 Route::put('/spendings/meals/{spending}', [\App\Modules\PettyCash\Controllers\Spending\MealController::class, 'update'])->name('petty.meals.update');
+Route::delete('/spendings/meals/{spending}', [\App\Modules\PettyCash\Controllers\Spending\MealController::class, 'destroy'])->name('petty.meals.destroy');
 
 // Others edit
 Route::get('/spendings/others/{spending}/edit', [\App\Modules\PettyCash\Controllers\Spending\OtherController::class, 'edit'])->name('petty.others.edit');
 Route::put('/spendings/others/{spending}', [\App\Modules\PettyCash\Controllers\Spending\OtherController::class, 'update'])->name('petty.others.update');
+Route::delete('/spendings/others/{spending}', [\App\Modules\PettyCash\Controllers\Spending\OtherController::class, 'destroy'])->name('petty.others.destroy');
 
 // Token payments edit (individual payment rows)
 Route::get('/spendings/tokens/payments/{payment}/edit', [\App\Modules\PettyCash\Controllers\Spending\TokenController::class, 'editPayment'])->name('petty.tokens.payments.edit');
 Route::put('/spendings/tokens/payments/{payment}', [\App\Modules\PettyCash\Controllers\Spending\TokenController::class, 'updatePayment'])->name('petty.tokens.payments.update');
+Route::delete('/spendings/tokens/payments/{payment}', [\App\Modules\PettyCash\Controllers\Spending\TokenController::class, 'destroyPayment'])->name('petty.tokens.payments.destroy');
 
 
 Route::get('/spendings/meals/{spending}/edit', [\App\Modules\PettyCash\Controllers\Spending\MealController::class, 'edit'])->name('petty.meals.edit');

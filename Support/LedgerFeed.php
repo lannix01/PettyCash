@@ -3,7 +3,6 @@
 namespace App\Modules\PettyCash\Support;
 
 use Illuminate\Database\Query\Builder;
-use Illuminate\Support\Facades\DB;
 
 class LedgerFeed
 {
@@ -26,7 +25,7 @@ class LedgerFeed
     public static function outflowFeedQuery(): Builder
     {
         // Adjust table name if yours differs
-        $spendings = DB::table('petty_spendings')
+        $spendings = PettyDatabase::table('petty_spendings')
             ->selectRaw("
                 id,
                 date,
@@ -41,7 +40,7 @@ class LedgerFeed
                 'spending' as source
             ");
 
-        $services = DB::table('petty_bike_services as s')
+        $services = PettyDatabase::table('petty_bike_services as s')
             ->leftJoin('petty_bikes as b', 'b.id', '=', 's.bike_id')
             ->selectRaw("
                 s.id as id,
@@ -65,7 +64,7 @@ class LedgerFeed
             ");
 
         // Union into a single dataset
-        return DB::query()->fromSub(
+        return PettyDatabase::query()->fromSub(
             $spendings->unionAll($services),
             'cashout'
         );

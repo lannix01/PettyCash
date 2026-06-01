@@ -22,8 +22,10 @@
 @section('content')
 @php
     $canEditCredit = \App\Modules\PettyCash\Support\PettyAccess::allows(auth('petty')->user(), 'credits.edit');
+    $canDeleteCredit = \App\Modules\PettyCash\Support\PettyAccess::isAdmin(auth('petty')->user());
 @endphp
-<div class="wrap">
+<div class="wrap pc-list-shell" data-pc-list-root="credits-index" data-pc-ajax="1">
+    <div class="pc-inline-refresh"><span class="spinner"></span><span>Refreshing records...</span></div>
     <div class="top">
         <div>
             <h2 style="margin:0">Credits</h2>
@@ -33,9 +35,9 @@
             <a class="btn" href="{{ route('petty.credits.create') }}">+ New Credit</a>
             @include('pettycash::partials.export_select', [
                 'options' => [
-                    'PDF' => route('petty.credits.pdf', ['from' => $from, 'to' => $to, 'format' => 'pdf']),
-                    'CSV' => route('petty.credits.pdf', ['from' => $from, 'to' => $to, 'format' => 'csv']),
-                    'Excel' => route('petty.credits.pdf', ['from' => $from, 'to' => $to, 'format' => 'excel']),
+                    'PDF' => route('petty.credits.pdf', ['from' => $from, 'to' => $to, 'q' => $q, 'sort' => $sort, 'format' => 'pdf']),
+                    'CSV' => route('petty.credits.pdf', ['from' => $from, 'to' => $to, 'q' => $q, 'sort' => $sort, 'format' => 'csv']),
+                    'Excel' => route('petty.credits.pdf', ['from' => $from, 'to' => $to, 'q' => $q, 'sort' => $sort, 'format' => 'excel']),
                 ],
             ])
         </div>
@@ -43,13 +45,17 @@
 
     <div class="card">
         <div class="pc-filter-dock">
-            <details class="pc-filter-panel" @if(filled($from) || filled($to)) open @endif>
+            <details class="pc-filter-panel" open data-filter-pinned="1">
                 <summary>
                     <span class="pc-filter-title">Filters</span>
-                    <span class="pc-filter-state">{{ filled($from) || filled($to) ? 'active' : 'optional' }}</span>
+                    <span class="pc-filter-state">{{ filled($from) || filled($to) || filled($q) || filled($sort) ? 'live' : 'ready' }}</span>
                 </summary>
                 <div class="pc-filter-body">
-                    <form method="GET" class="row pc-filter-row" action="{{ route('petty.credits.index') }}">
+                    <form method="GET" class="row pc-filter-row" action="{{ route('petty.credits.index') }}" data-pc-auto-filter="1" data-pc-list-root-id="credits-index">
+                        <div class="pc-filter-grow">
+                            <div class="muted">Search</div>
+                            <input type="search" name="q" value="{{ $q }}" placeholder="Reference, batch, description">
+                        </div>
                         <div>
                             <div class="muted">From</div>
                             <input type="date" name="from" value="{{ $from }}">
@@ -58,8 +64,19 @@
                             <div class="muted">To</div>
                             <input type="date" name="to" value="{{ $to }}">
                         </div>
-                        <button class="btn" type="submit">Filter</button>
-                        <a class="btn2" href="{{ route('petty.credits.index') }}">Reset</a>
+                        <div>
+                            <div class="muted">Sort</div>
+                            <select name="sort">
+                                <option value="date_desc" @selected($sort === 'date_desc')>Newest First</option>
+                                <option value="date_asc" @selected($sort === 'date_asc')>Oldest First</option>
+                                <option value="amount_desc" @selected($sort === 'amount_desc')>Amount High-Low</option>
+                                <option value="amount_asc" @selected($sort === 'amount_asc')>Amount Low-High</option>
+                            </select>
+                        </div>
+                        <div class="pc-filter-actions">
+                            <button class="btn" type="submit">Apply</button>
+                            <a class="btn2" href="{{ route('petty.credits.index') }}">Reset</a>
+                        </div>
                     </form>
                 </div>
             </details>
@@ -74,7 +91,7 @@
                 <th>Amount</th>
                 <th>Batch</th>
                 <th>Description</th>
-                @if($canEditCredit)
+                @if($canEditCredit || $canDeleteCredit)
                     <th>Actions</th>
                 @endif
             </tr>
@@ -89,12 +106,23 @@
                         <a href="{{ route('petty.batches.show', $c->batch_id) }}">{{ $c->batch?->batch_no ?? ('Batch #'.$c->batch_id) }}</a>
                     </td>
                     <td>{{ $c->description }}</td>
-                    @if($canEditCredit)
-                        <td><a href="{{ route('petty.credits.edit', $c->id) }}">Edit</a></td>
+                    @if($canEditCredit || $canDeleteCredit)
+                        <td>
+                            @if($canEditCredit)
+                                <a href="{{ route('petty.credits.edit', $c->id) }}">Edit</a>
+                            @endif
+                            @if($canDeleteCredit)
+                                <form method="POST" action="{{ route('petty.credits.destroy', $c->id) }}" style="display:inline-block;margin-left:8px" data-confirm="Delete this credit?">
+                                    @csrf
+                                    @method('DELETE')
+                                    <button type="submit" style="border:none;background:none;color:#b42318;cursor:pointer;padding:0">Delete</button>
+                                </form>
+                            @endif
+                        </td>
                     @endif
                 </tr>
             @empty
-                <tr><td colspan="{{ $canEditCredit ? 6 : 5 }}" class="muted">No credits yet.</td></tr>
+                <tr><td colspan="{{ ($canEditCredit || $canDeleteCredit) ? 6 : 5 }}" class="muted">No credits yet.</td></tr>
             @endforelse
             </tbody>
         </table>

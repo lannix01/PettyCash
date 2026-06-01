@@ -7,10 +7,9 @@ use App\Modules\PettyCash\Models\Bike;
 use App\Modules\PettyCash\Models\BikeService;
 use App\Modules\PettyCash\Models\Spending;
 use App\Modules\PettyCash\Support\ApiResponder;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class MaintenanceController extends Controller
 {
@@ -274,7 +273,7 @@ class MaintenanceController extends Controller
         $user = $request->attributes->get('pettyUser');
         $service = null;
 
-        DB::transaction(function () use ($bike, $data, $user, &$service) {
+        PettyDatabase::transaction(function () use ($bike, $data, $user, &$service) {
             $lockedBike = Bike::query()->lockForUpdate()->findOrFail($bike->id);
 
             $service = BikeService::query()->create([
@@ -344,7 +343,7 @@ class MaintenanceController extends Controller
             ]);
         }
 
-        DB::transaction(function () use ($service, $data, $serviceDate, $nextDueDate) {
+        PettyDatabase::transaction(function () use ($service, $data, $serviceDate, $nextDueDate) {
             $service->fill([
                 'service_date' => $serviceDate,
                 'next_due_date' => $nextDueDate,
@@ -383,15 +382,15 @@ class MaintenanceController extends Controller
         $ip = (string) $request->ip();
         $userAgent = (string) $request->userAgent();
 
-        DB::transaction(function () use ($service, $bikeId, $serviceId, $serviceSnapshot, $user, $ip, $userAgent) {
+        PettyDatabase::transaction(function () use ($service, $bikeId, $serviceId, $serviceSnapshot, $user, $ip, $userAgent) {
             $service->delete();
 
             $bike = Bike::query()->lockForUpdate()->findOrFail($bikeId);
             $this->syncBikeServiceDates($bike);
             $bike->save();
 
-            if (Schema::hasTable('petty_bike_service_logs')) {
-                DB::table('petty_bike_service_logs')->insert([
+            if (PettyDatabase::schema()->hasTable('petty_bike_service_logs')) {
+                PettyDatabase::table('petty_bike_service_logs')->insert([
                     'bike_service_id' => $serviceId,
                     'bike_id' => $bikeId,
                     'action' => 'deleted',

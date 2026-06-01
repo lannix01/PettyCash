@@ -105,3 +105,7 @@ Reference for PettyCash API v1 endpoints to share with other developers.
 - Some delete endpoints are strictly admin-only.
 - For payment update/delete support, ensure migrations enabling `spending_id` linkage are applied.
 - Use `X-Request-Id` in logs to trace requests end-to-end.
+
+/root/Marcep/netbil/mobile/android-pettycash/app/build/outputs/apk/pettycash/debug/app-pettycash-arm64-v8a-debug.apk
+
+/root/Marcep/netbil/app/Modules/PettyCash/Support/downloadedcodex

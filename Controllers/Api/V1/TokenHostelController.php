@@ -10,10 +10,9 @@ use App\Modules\PettyCash\Models\SpendingAllocation;
 use App\Modules\PettyCash\Support\ApiResponder;
 use App\Modules\PettyCash\Services\FundsAllocatorService;
 use App\Modules\PettyCash\Services\OntDirectoryService;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class TokenHostelController extends Controller
 {
@@ -126,7 +125,12 @@ class TokenHostelController extends Controller
             $dueStatus = 'unknown';
             $dueBadge = 'No payments yet';
 
-            if ($lastDate) {
+            if ($h->is_due_immediately && !$lastDate) {
+                $nextDue = $today;
+                $daysToDue = 0;
+                $dueStatus = 'due_today';
+                $dueBadge = 'Due today';
+            } elseif ($lastDate) {
                 if (($h->stake ?: 'monthly') === 'semester') {
                     $nextDue = $lastDate->copy()->addMonthsNoOverflow($semesterMonths)->startOfDay();
                 } else {
@@ -156,6 +160,7 @@ class TokenHostelController extends Controller
                 'stake' => $h->stake,
                 'amount_due' => (float) ($h->amount_due ?? 0),
                 'ont_merged' => (bool) ($h->ont_merged ?? false),
+                'is_due_immediately' => (bool) ($h->is_due_immediately ?? false),
                 'last_payment_amount' => $last ? (float) $last->amount : null,
                 'last_payment_date' => $last?->date?->format('Y-m-d'),
                 'next_due_date' => $nextDue ? $nextDue->format('Y-m-d') : null,
@@ -232,14 +237,18 @@ class TokenHostelController extends Controller
         if ($deny = $this->denyIfRoleNotIn($request, ['admin', 'accountant', 'finance'])) return $deny;
 
         $data = $request->validate([
+            'create_mode' => ['nullable', 'in:ont_site,chained_hostel'],
             'hostel_name' => ['nullable', 'string', 'max:255'],
             'ont_key' => ['nullable', 'string', 'max:120'],
+            'chained_from_hostel_id' => ['nullable', 'integer'],
+            'chained_from_ont_key' => ['nullable', 'string', 'max:120'],
             'contact_person' => ['nullable', 'string', 'max:255'],
-            'meter_no' => ['required', 'string', 'max:255'],
+            'meter_no' => ['nullable', 'string', 'max:255'],
             'phone_no' => ['nullable', 'string', 'max:255'],
             'no_of_routers' => ['nullable', 'integer', 'min:0'],
-            'stake' => ['required', 'in:monthly,semester'],
-            'amount_due' => ['required', 'numeric', 'min:0'],
+            'stake' => ['nullable', 'in:monthly,semester'],
+            'amount_due' => ['nullable', 'numeric', 'min:0'],
+            'is_due_immediately' => ['nullable', 'boolean'],
         ]);
 
         [$candidate, $validationError] = $this->resolveOntCandidate(
@@ -265,11 +274,12 @@ class TokenHostelController extends Controller
         $payload = [
             'hostel_name' => $data['hostel_name'],
             'contact_person' => $data['contact_person'] ?? null,
-            'meter_no' => $data['meter_no'],
+            'meter_no' => trim((string) ($data['meter_no'] ?? '')) !== '' ? trim((string) $data['meter_no']) : null,
             'phone_no' => $data['phone_no'] ?? null,
             'no_of_routers' => $this->resolveRoutersInput($data),
-            'stake' => $data['stake'],
-            'amount_due' => $data['amount_due'],
+            'stake' => $data['stake'] ?? 'monthly',
+            'amount_due' => (float) ($data['amount_due'] ?? 0),
+            'is_due_immediately' => $data['is_due_immediately'] ?? false,
         ];
         if ($this->hostelOntColumnsAvailable()) {
             $payload['ont_site_id'] = (string) ($candidate['site_id'] ?? '') !== '' ? (string) $candidate['site_id'] : null;
@@ -286,6 +296,86 @@ class TokenHostelController extends Controller
         ], 'Hostel created.', 201);
     }
 
+    public function agreement(Hostel $hostel)
+    {
+        return $this->successResponse([
+            'hostel' => $this->buildHostelSnapshot($hostel),
+            'agreement' => [
+                'agreement_type' => (string) ($hostel->agreement_type ?? 'none'),
+                'agreement_label' => (string) ($hostel->agreement_label ?? ''),
+                'meter_no' => $hostel->meter_no,
+                'phone_no' => $hostel->phone_no,
+                'contact_person' => $hostel->contact_person,
+                'stake' => (string) ($hostel->stake ?? 'monthly'),
+                'amount_due' => (float) ($hostel->amount_due ?? 0),
+            ],
+        ], 'Hostel agreement fetched.');
+    }
+
+    public function updateAgreement(Request $request, Hostel $hostel)
+    {
+        if ($deny = $this->denyIfRoleNotIn($request, ['admin', 'accountant', 'finance'])) return $deny;
+
+        $data = $request->validate([
+            'agreement_type' => ['required', 'in:token,send_money,package,none'],
+            'agreement_label' => ['nullable', 'string', 'max:255'],
+            'meter_no' => ['nullable', 'string', 'max:255'],
+            'phone_no' => ['nullable', 'string', 'max:255'],
+            'contact_person' => ['nullable', 'string', 'max:255'],
+            'stake' => ['required', 'in:monthly,semester'],
+            'amount_due' => ['required', 'numeric', 'min:0'],
+        ]);
+
+        $agreementType = strtolower(trim((string) ($data['agreement_type'] ?? 'none')));
+        $meterNo = trim((string) ($data['meter_no'] ?? ''));
+        $phoneNo = trim((string) ($data['phone_no'] ?? ''));
+        $contactPerson = trim((string) ($data['contact_person'] ?? ''));
+
+        if ($agreementType === 'token' && $meterNo === '') {
+            return $this->errorResponse('Validation failed.', 422, [
+                'meter_no' => ['Meter number is required for token agreement.'],
+            ]);
+        }
+
+        if ($agreementType === 'send_money' && $phoneNo === '') {
+            return $this->errorResponse('Validation failed.', 422, [
+                'phone_no' => ['Phone number is required for send money agreement.'],
+            ]);
+        }
+
+        if ($agreementType === 'send_money' && $contactPerson === '') {
+            return $this->errorResponse('Validation failed.', 422, [
+                'contact_person' => ['Recipient name is required for send money agreement.'],
+            ]);
+        }
+
+        $hostel->agreement_type = $agreementType;
+        $hostel->agreement_label = trim((string) ($data['agreement_label'] ?? '')) !== ''
+            ? trim((string) $data['agreement_label'])
+            : null;
+        $hostel->stake = (string) $data['stake'];
+        $hostel->amount_due = (float) $data['amount_due'];
+        $hostel->contact_person = $contactPerson !== '' ? $contactPerson : ($hostel->contact_person ?: null);
+        $hostel->phone_no = $phoneNo !== '' ? $phoneNo : ($hostel->phone_no ?: null);
+        $hostel->meter_no = $agreementType === 'token'
+            ? ($meterNo !== '' ? $meterNo : ($hostel->meter_no ?: null))
+            : null;
+        $hostel->save();
+
+        return $this->successResponse([
+            'hostel' => $this->buildHostelSnapshot($hostel->fresh()),
+            'agreement' => [
+                'agreement_type' => (string) ($hostel->agreement_type ?? 'none'),
+                'agreement_label' => (string) ($hostel->agreement_label ?? ''),
+                'meter_no' => $hostel->meter_no,
+                'phone_no' => $hostel->phone_no,
+                'contact_person' => $hostel->contact_person,
+                'stake' => (string) ($hostel->stake ?? 'monthly'),
+                'amount_due' => (float) ($hostel->amount_due ?? 0),
+            ],
+        ], 'Hostel agreement updated.');
+    }
+
     public function updateHostel(Request $request, Hostel $hostel)
     {
         if ($deny = $this->denyIfRoleNotIn($request, ['admin', 'accountant', 'finance'])) return $deny;
@@ -299,6 +389,7 @@ class TokenHostelController extends Controller
             'no_of_routers' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'stake' => ['sometimes', 'required', 'in:monthly,semester'],
             'amount_due' => ['sometimes', 'required', 'numeric', 'min:0'],
+            'is_due_immediately' => ['sometimes', 'boolean'],
         ]);
 
         if (empty($data)) {
@@ -517,7 +608,7 @@ class TokenHostelController extends Controller
         $allocations = [];
 
         try {
-            DB::transaction(function () use (
+            PettyDatabase::transaction(function () use (
                 $hostel,
                 $data,
                 $fee,
@@ -666,7 +757,7 @@ class TokenHostelController extends Controller
 
         $allocations = [];
         try {
-            DB::transaction(function () use (
+            PettyDatabase::transaction(function () use (
                 &$spending,
                 &$payment,
                 $hostel,
@@ -758,7 +849,7 @@ class TokenHostelController extends Controller
 
         $hostel = Hostel::query()->find($payment->hostel_id);
 
-        DB::transaction(function () use ($payment, $spending) {
+        PettyDatabase::transaction(function () use ($payment, $spending) {
             SpendingAllocation::query()->where('spending_id', $spending->id)->delete();
             $payment->delete();
             $spending->delete();
@@ -897,7 +988,12 @@ class TokenHostelController extends Controller
         $dueStatus = 'unknown';
         $dueBadge = 'No payments yet';
 
-        if ($lastDate) {
+        if ($hostel->is_due_immediately && !$lastDate) {
+            $nextDue = $today;
+            $daysToDue = 0;
+            $dueStatus = 'due_today';
+            $dueBadge = 'Due today';
+        } elseif ($lastDate) {
             if (($hostel->stake ?: 'monthly') === 'semester') {
                 $nextDue = $lastDate->copy()->addMonthsNoOverflow($semesterMonths)->startOfDay();
             } else {
@@ -916,6 +1012,8 @@ class TokenHostelController extends Controller
         return [
             'id' => $hostel->id,
             'hostel_name' => $hostel->hostel_name,
+            'agreement_type' => (string) ($hostel->agreement_type ?? 'none'),
+            'agreement_label' => (string) ($hostel->agreement_label ?? ''),
             'contact_person' => $hostel->contact_person,
             'ont_site_id' => $hostel->ont_site_id,
             'ont_site_sn' => $hostel->ont_site_sn,
@@ -925,6 +1023,7 @@ class TokenHostelController extends Controller
             'stake' => $hostel->stake,
             'amount_due' => (float) ($hostel->amount_due ?? 0),
             'ont_merged' => (bool) ($hostel->ont_merged ?? false),
+            'is_due_immediately' => (bool) ($hostel->is_due_immediately ?? false),
             'last_payment_amount' => $latest ? (float) $latest->amount : null,
             'last_payment_date' => $latest?->date?->format('Y-m-d'),
             'next_due_date' => $nextDue ? $nextDue->format('Y-m-d') : null,
@@ -939,7 +1038,7 @@ class TokenHostelController extends Controller
         static $supports = null;
 
         if ($supports === null) {
-            $supports = Schema::hasColumn('petty_payments', 'spending_id');
+            $supports = PettyDatabase::schema()->hasColumn('petty_payments', 'spending_id');
         }
 
         return $supports;
@@ -950,8 +1049,8 @@ class TokenHostelController extends Controller
         static $supports = null;
 
         if ($supports === null) {
-            $supports = Schema::hasColumn('petty_hostels', 'ont_site_id')
-                && Schema::hasColumn('petty_hostels', 'ont_site_sn');
+            $supports = PettyDatabase::schema()->hasColumn('petty_hostels', 'ont_site_id')
+                && PettyDatabase::schema()->hasColumn('petty_hostels', 'ont_site_sn');
         }
 
         return $supports;
@@ -962,7 +1061,7 @@ class TokenHostelController extends Controller
         static $supports = null;
 
         if ($supports === null) {
-            $supports = Schema::hasColumn('petty_hostels', 'ont_merged');
+            $supports = PettyDatabase::schema()->hasColumn('petty_hostels', 'ont_merged');
         }
 
         return $supports;

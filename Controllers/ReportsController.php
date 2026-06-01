@@ -32,7 +32,7 @@ class ReportsController extends Controller
         return view('pettycash::reports.general_form', [
             'batches' => Batch::orderByDesc('id')->get(),
             'bikes' => Bike::orderBy('plate_no')->get(),
-            'respondents' => Respondent::orderBy('name')->get(),
+            'respondents' => Respondent::query()->selectable()->orderBy('name')->get(),
         ]);
     }
 

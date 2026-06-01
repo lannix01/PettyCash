@@ -52,6 +52,7 @@ class ReportController extends Controller
                 ])
                 ->values(),
             'respondents' => Respondent::query()
+                ->selectable()
                 ->orderBy('name')
                 ->get()
                 ->map(fn (Respondent $respondent) => [
@@ -59,6 +60,7 @@ class ReportController extends Controller
                     'name' => $respondent->name,
                     'phone' => $respondent->phone,
                     'category' => $respondent->category,
+                    'status' => $respondent->normalizedStatus(),
                 ])
                 ->values(),
             'hostels' => Hostel::query()

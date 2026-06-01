@@ -5,17 +5,17 @@ namespace App\Modules\PettyCash\Services;
 use App\Modules\PettyCash\Models\Batch;
 use App\Modules\PettyCash\Models\Spending;
 use App\Modules\PettyCash\Models\SpendingAllocation;
-use Illuminate\Support\Facades\DB;
+use App\Modules\PettyCash\Support\PettyDatabase;
 
 class FundsAllocatorService
 {
     public function totalNetBalance(): float
     {
-        $credits = DB::table('petty_credits')
+        $credits = PettyDatabase::table('petty_credits')
             ->selectRaw('batch_id, COALESCE(SUM(amount - COALESCE(transaction_cost,0)),0) as credited_net')
             ->groupBy('batch_id');
 
-        $allocs = DB::table('petty_spending_allocations')
+        $allocs = PettyDatabase::table('petty_spending_allocations')
             ->selectRaw('batch_id, COALESCE(SUM(amount + COALESCE(transaction_cost,0)),0) as spent_net')
             ->groupBy('batch_id');
 
@@ -33,11 +33,11 @@ class FundsAllocatorService
      */
     public function batchesWithNetAvailable(?int $onlyBatchId = null)
     {
-        $credits = DB::table('petty_credits')
+        $credits = PettyDatabase::table('petty_credits')
             ->selectRaw('batch_id, COALESCE(SUM(amount - COALESCE(transaction_cost,0)),0) as credited_net')
             ->groupBy('batch_id');
 
-        $allocs = DB::table('petty_spending_allocations')
+        $allocs = PettyDatabase::table('petty_spending_allocations')
             ->selectRaw('batch_id, COALESCE(SUM(amount + COALESCE(transaction_cost,0)),0) as spent_net')
             ->groupBy('batch_id');
 
@@ -64,7 +64,7 @@ class FundsAllocatorService
         if ($amount <= 0) throw new \InvalidArgumentException('Amount must be > 0');
         if ($fee < 0) throw new \InvalidArgumentException('Fee must be >= 0');
 
-        return DB::transaction(function () use ($spending, $amount, $fee, $onlyBatchId) {
+        return PettyDatabase::transaction(function () use ($spending, $amount, $fee, $onlyBatchId) {
             $requiredTotal = round($amount + $fee, 2);
             $batches = $this->batchesWithNetAvailable($onlyBatchId);
             $availableTotal = round((float) $batches->sum(fn ($b) => (float) $b->available_balance), 2);
@@ -131,6 +131,47 @@ class FundsAllocatorService
             $spending->save();
 
             return ['allocations' => $rows];
+        });
+    }
+
+    /**
+     * Force allocations onto a single batch during edit/update flows.
+     * This bypasses balance checks and simply keeps allocation rows aligned
+     * with the saved spending figures.
+     */
+    public function forceAllocateToBatch(Spending $spending, float $amount, float $fee, int $batchId): array
+    {
+        $amount = round($amount, 2);
+        $fee = round($fee, 2);
+
+        if ($amount <= 0) {
+            throw new \InvalidArgumentException('Amount must be > 0');
+        }
+
+        if ($fee < 0) {
+            throw new \InvalidArgumentException('Fee must be >= 0');
+        }
+
+        $batch = Batch::query()->findOrFail($batchId);
+
+        return PettyDatabase::transaction(function () use ($spending, $amount, $fee, $batch) {
+            SpendingAllocation::where('spending_id', $spending->id)->delete();
+
+            SpendingAllocation::create([
+                'spending_id' => $spending->id,
+                'batch_id' => (int) $batch->id,
+                'amount' => $amount,
+                'transaction_cost' => $fee,
+            ]);
+
+            $spending->batch_id = (int) $batch->id;
+            $spending->save();
+
+            return ['allocations' => [[
+                'batch_id' => (int) $batch->id,
+                'amount' => $amount,
+                'transaction_cost' => $fee,
+            ]]];
         });
     }
 }

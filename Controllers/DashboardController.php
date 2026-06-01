@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use App\Modules\PettyCash\Services\BalanceService;
 use App\Modules\PettyCash\Models\Bike;
 use App\Modules\PettyCash\Models\BikeService;
+use App\Modules\PettyCash\Support\PettyAccess;
 use Carbon\Carbon;
 
 class DashboardController extends Controller
@@ -68,6 +69,19 @@ class DashboardController extends Controller
             ->orderBy('plate_no')
             ->limit(6)
             ->get();
+
+        $user = auth('petty')->user();
+        $canViewSummary = PettyAccess::allows($user, 'dashboard.summary');
+        $canViewCategoryTotals = PettyAccess::allows($user, 'dashboard.category_totals');
+        $canViewBreakdown = PettyAccess::allows($user, 'dashboard.breakdown');
+
+        if (!$canViewSummary && !$canViewCategoryTotals && !$canViewBreakdown && PettyAccess::allows($user, 'dashboard.view')) {
+            $canViewSummary = true;
+        }
+
+        $data['canViewDashboardSummary'] = $canViewSummary;
+        $data['canViewDashboardCategoryTotals'] = $canViewCategoryTotals;
+        $data['canViewDashboardBreakdown'] = $canViewBreakdown;
 
         return view('pettycash::dashboard.index', $data);
     }

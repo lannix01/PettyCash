@@ -11,6 +11,8 @@
 .badge{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800}
 .badge-ok{background:#ecfdf3;color:#027a48;border:1px solid #abefc6}
 .badge-off{background:#f2f4f7;color:#475467;border:1px solid #eaecf0}
+.badge-alert{background:#fff7e6;color:#b54708;border:1px solid #fedf89}
+.badge-stop{background:#fef3f2;color:#b42318;border:1px solid #fecdca}
 .avatar{width:96px;height:96px;border-radius:50%;background:#eef4ff;color:#1849a9;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:30px;overflow:hidden;border:1px solid #d0d5dd}
 .avatar img{width:100%;height:100%;object-fit:cover}
 .k{font-size:11px;color:#667085;text-transform:uppercase;letter-spacing:.04em}
@@ -63,12 +65,32 @@
                 <div class="v">{{ $respondent->phone ?: '-' }}</div>
             </div>
             <div style="margin-top:10px">
+                <div class="k">Staff ID</div>
+                <div class="v">{{ $respondent->staff_id ?: '-' }}</div>
+            </div>
+            <div style="margin-top:10px">
+                <div class="k">Status</div>
+                @php
+                    $statusClass = match($respondent->normalizedStatus()) {
+                        \App\Modules\PettyCash\Models\Respondent::STATUS_ACTIVE => 'badge-ok',
+                        \App\Modules\PettyCash\Models\Respondent::STATUS_DECOMMISSIONED => 'badge-stop',
+                        \App\Modules\PettyCash\Models\Respondent::STATUS_FLAGGED => 'badge-alert',
+                        default => 'badge-off',
+                    };
+                @endphp
+                <div class="v"><span class="badge {{ $statusClass }}">{{ $respondent->statusLabel() }}</span></div>
+            </div>
+            <div style="margin-top:10px">
                 <div class="k">Category</div>
                 <div class="v">{{ $respondent->category ?: '-' }}</div>
             </div>
             <div style="margin-top:10px">
                 <div class="k">Profile Title</div>
                 <div class="v">{{ $respondent->profile_title ?: '-' }}</div>
+            </div>
+            <div style="margin-top:10px">
+                <div class="k">Card Expiry</div>
+                <div class="v">{{ $respondent->card_expires_at?->format('Y-m-d') ?: '-' }}</div>
             </div>
 
             @if($canEditRespondent)
@@ -86,11 +108,11 @@
 
             @if($publicCardUrl && $canEditRespondent)
                 <div style="margin-top:12px">
-                    <div class="k">Public Download Link</div>
+                    <div class="k">Public Verify Link</div>
                     <div style="margin-top:6px">
                         <a class="btn2" target="_blank" href="{{ $publicCardUrl }}">Open Public Link</a>
                     </div>
-                    <div class="muted" style="margin-top:6px">Password for download: registered phone number.</div>
+                    <div class="muted" style="margin-top:6px">Downloads include PDF and PNG. Password remains the registered phone number.</div>
                     @if($respondent->card_sms_sent_at)
                         <div class="muted" style="margin-top:4px">Last SMS: {{ $respondent->card_sms_sent_at?->format('Y-m-d H:i') }}</div>
                     @endif
@@ -119,13 +141,31 @@
                     </div>
 
                     <div class="pc-field">
+                        <label>Staff ID</label>
+                        <input class="pc-input" name="staff_id" value="{{ old('staff_id', $respondent->staff_id) }}" placeholder="Auto-generated if left blank">
+                    </div>
+
+                    <div class="pc-field">
                         <label>Category</label>
-                        <input class="pc-input" name="category" value="{{ old('category', $respondent->category) }}">
+                        <select class="pc-select" name="category" required>
+                            @foreach($categoryOptions as $category)
+                                <option value="{{ $category }}" @selected(old('category', $respondent->category ?: \App\Modules\PettyCash\Models\Respondent::CATEGORY_OTHER_STAFF) === $category)>{{ $category }}</option>
+                            @endforeach
+                        </select>
+                    </div>
+
+                    <div class="pc-field">
+                        <label>Status</label>
+                        <select class="pc-select" name="status" required>
+                            @foreach($statusOptions as $value => $label)
+                                <option value="{{ $value }}" @selected(old('status', $respondent->normalizedStatus()) === $value)>{{ $label }}</option>
+                            @endforeach
+                        </select>
                     </div>
 
                     <div class="pc-field">
                         <label>Profile Title</label>
-                        <input class="pc-input" name="profile_title" value="{{ old('profile_title', $respondent->profile_title) }}" placeholder="Supplier, Contractor, Agent...">
+                        <input class="pc-input" name="profile_title" value="{{ old('profile_title', $respondent->profile_title) }}" placeholder="Role or internal title">
                     </div>
 
                     <div class="pc-field">

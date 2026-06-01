@@ -5,16 +5,21 @@
 @php
     $pettyUser = auth('petty')->user();
     $canCreateDaily = \App\Modules\PettyCash\Support\PettyAccess::allows($pettyUser, 'meals_daily.create');
+    $canEditDaily = \App\Modules\PettyCash\Support\PettyAccess::allows($pettyUser, 'meals_daily.edit_bill');
     $canRecordPayment = \App\Modules\PettyCash\Support\PettyAccess::allows($pettyUser, 'meals_daily.record_payment');
+    $canEditMealPayment = \App\Modules\PettyCash\Support\PettyAccess::allows($pettyUser, 'meals_daily.edit_payment');
+    $canDeleteDaily = \App\Modules\PettyCash\Support\PettyAccess::isAdmin($pettyUser);
+    $canDeleteMealPayment = \App\Modules\PettyCash\Support\PettyAccess::isAdmin($pettyUser);
     $openDailyBillModal = old('spending_date') !== null
-        || old('amount') !== null
-        || old('involved_respondent_ids') !== null
-        || old('notes') !== null;
+        || old('range_from') !== null
+        || old('range_to') !== null
+        || old('day_entries') !== null;
 
-    $oldInvolved = old('involved_respondent_ids', []);
-    if (!is_array($oldInvolved)) {
-        $oldInvolved = [];
+    $oldDayEntries = old('day_entries', []);
+    if (!is_array($oldDayEntries)) {
+        $oldDayEntries = [];
     }
+    $respondentOptions = $respondents->map(fn ($r) => ['id' => $r->id, 'name' => $r->name, 'phone' => $r->phone])->values();
 @endphp
 
 @push('styles')
@@ -69,7 +74,8 @@
 @endpush
 
 @section('content')
-<div class="wrap">
+<div class="wrap pc-list-shell" data-pc-list-root="meals-daily-index">
+    <div class="pc-inline-refresh"><span class="spinner"></span><span>Refreshing records...</span></div>
     @if(session('success'))
         <div class="ok card" style="margin-top:0">{{ session('success') }}</div>
     @endif
@@ -118,13 +124,17 @@
 
     <div class="card">
         <div class="pc-filter-dock">
-            <details class="pc-filter-panel" @if(filled($respondentId) || filled($from) || filled($to) || ($status ?? 'all') !== 'all') open @endif>
+            <details class="pc-filter-panel" open data-filter-pinned="1">
                 <summary>
                     <span class="pc-filter-title">Filters</span>
-                    <span class="pc-filter-state">{{ filled($respondentId) || filled($from) || filled($to) || ($status ?? 'all') !== 'all' ? 'active' : 'optional' }}</span>
+                    <span class="pc-filter-state">live</span>
                 </summary>
                 <div class="pc-filter-body">
-                    <form method="GET" class="row pc-filter-row" action="{{ route('petty.meals.daily.index') }}">
+                    <form method="GET" class="row pc-filter-row" action="{{ route('petty.meals.daily.index') }}" data-pc-auto-filter="1" data-pc-list-root-id="meals-daily-index">
+                        <div class="pc-filter-grow">
+                            <div class="muted">Search</div>
+                            <input type="search" name="q" value="{{ $q }}" placeholder="People, notes, payment ref, receiver">
+                        </div>
                         <div>
                             <div class="muted">Involved Person</div>
                             <select name="respondent_id">
@@ -150,8 +160,19 @@
                             <div class="muted">To</div>
                             <input type="date" name="to" value="{{ $to }}">
                         </div>
-                        <button class="btn" type="submit">Filter</button>
-                        <a class="btn2" href="{{ route('petty.meals.daily.index') }}">Reset</a>
+                        <div>
+                            <div class="muted">Sort</div>
+                            <select name="sort">
+                                <option value="date_desc" @selected($sort === 'date_desc')>Newest First</option>
+                                <option value="date_asc" @selected($sort === 'date_asc')>Oldest First</option>
+                                <option value="amount_desc" @selected($sort === 'amount_desc')>Amount High-Low</option>
+                                <option value="amount_asc" @selected($sort === 'amount_asc')>Amount Low-High</option>
+                            </select>
+                        </div>
+                        <div class="pc-filter-actions">
+                            <button class="btn" type="submit">Apply</button>
+                            <a class="btn2" href="{{ route('petty.meals.daily.index') }}">Reset</a>
+                        </div>
                     </form>
                 </div>
             </details>
@@ -188,6 +209,8 @@
                     <th>Notes</th>
                     <th>Status</th>
                     @if($canRecordPayment)
+                        <th>Actions</th>
+                    @elseif($canEditDaily || $canDeleteDaily)
                         <th>Actions</th>
                     @endif
                 </tr>
@@ -235,15 +258,42 @@
                             <td>
                                 @if(!$row->meal_payment_id)
                                     <button class="btn2 pay-single-btn" type="button" data-meal-id="{{ $row->id }}">Pay</button>
+                                    @if($canEditDaily)
+                                        <a class="btn2" href="{{ route('petty.meals.daily.edit', $row->id) }}">Edit</a>
+                                    @endif
+                                    @if($canDeleteDaily)
+                                        <form method="POST" action="{{ route('petty.meals.daily.destroy', $row->id) }}" style="display:inline-block;margin-left:6px" data-confirm="Delete this daily meal bill?">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button class="btn2" type="submit">Delete</button>
+                                        </form>
+                                    @endif
                                 @else
                                     <span class="muted">-</span>
+                                @endif
+                            </td>
+                        @elseif($canEditDaily || $canDeleteDaily)
+                            <td>
+                                @if(!$row->meal_payment_id)
+                                    @if($canEditDaily)
+                                        <a class="btn2" href="{{ route('petty.meals.daily.edit', $row->id) }}">Edit</a>
+                                    @endif
+                                    @if($canDeleteDaily)
+                                        <form method="POST" action="{{ route('petty.meals.daily.destroy', $row->id) }}" style="display:inline-block;margin-left:6px" data-confirm="Delete this daily meal bill?">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button class="btn2" type="submit">Delete</button>
+                                        </form>
+                                    @endif
+                                @else
+                                    <span class="muted">Paid bill</span>
                                 @endif
                             </td>
                         @endif
                     </tr>
                 @empty
                     <tr>
-                        <td colspan="{{ $canRecordPayment ? 7 : 5 }}" class="muted">No daily meal bills found.</td>
+                        <td colspan="{{ ($canRecordPayment || $canEditDaily || $canDeleteDaily) ? 7 : 5 }}" class="muted">No daily meal bills found.</td>
                     </tr>
                 @endforelse
                 </tbody>
@@ -269,6 +319,9 @@
                     <th>People</th>
                     <th>Reference</th>
                     <th>Batch</th>
+                    @if($canEditMealPayment || $canDeleteMealPayment)
+                        <th>Actions</th>
+                    @endif
                 </tr>
                 </thead>
                 <tbody>
@@ -311,9 +364,23 @@
                             @endif
                         </td>
                         <td>{{ $p->batch?->batch_no ?? '-' }}</td>
+                        @if($canEditMealPayment || $canDeleteMealPayment)
+                            <td>
+                                @if($canEditMealPayment)
+                                    <a href="{{ route('petty.meals.daily.payments.edit', $p->id) }}">Edit</a>
+                                @endif
+                                @if($canDeleteMealPayment)
+                                    <form method="POST" action="{{ route('petty.meals.daily.payments.destroy', $p->id) }}" style="display:inline-block;margin-left:8px" data-confirm="Delete this meal payment?">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" style="border:none;background:none;color:#b42318;cursor:pointer;padding:0">Delete</button>
+                                    </form>
+                                @endif
+                            </td>
+                        @endif
                     </tr>
                 @empty
-                    <tr><td colspan="10" class="muted">No meal payments recorded yet.</td></tr>
+                    <tr><td colspan="{{ ($canEditMealPayment || $canDeleteMealPayment) ? 11 : 10 }}" class="muted">No meal payments recorded yet.</td></tr>
                 @endforelse
                 </tbody>
             </table>
@@ -327,42 +394,46 @@
             <div class="pc-modal-head">
                 <div>
                     <h3 style="margin:0">Record Daily Bill</h3>
-                    <div class="muted">Capture one meal bill for a date. People are optional.</div>
+                    <div class="muted">Build the date range into daily rows, then enter the amount, people, and details for each day.</div>
                 </div>
                 <button type="button" class="pc-close" data-daily-close>Close</button>
             </div>
             <div class="pc-modal-body">
-                <form method="POST" action="{{ route('petty.meals.daily.store') }}">
+                <form method="POST" action="{{ route('petty.meals.daily.store') }}" id="dailyBillForm">
                     @csrf
 
                     <div class="form-grid-two">
                         <div class="field">
-                            <label>Date</label>
-                            <input class="input" type="date" name="spending_date" required value="{{ old('spending_date', now()->toDateString()) }}">
-                            <div class="field-help">Day this meal bill happened.</div>
+                            <label>Range From</label>
+                            <input class="input" type="date" name="range_from" required value="{{ old('range_from', now()->toDateString()) }}">
+                            <div class="field-help">Start day for this meal bill run.</div>
                         </div>
                         <div class="field">
-                            <label>Amount Eaten</label>
-                            <input class="input" type="number" step="0.01" name="amount" required value="{{ old('amount') }}">
-                            <div class="field-help">Total amount for that day entry.</div>
+                            <label>Range To</label>
+                            <input class="input" type="date" name="range_to" required value="{{ old('range_to', now()->toDateString()) }}">
+                            <div class="field-help">End day for this meal bill run.</div>
+                        </div>
+                    </div>
+
+                    <div class="hint" style="margin-top:10px">
+                        Build one row per day so the amount eaten, respondents, and notes are all auditable.
+                    </div>
+
+                    <div class="daily-form-actions" style="justify-content:space-between">
+                        <div class="muted" id="dailyBillEntriesMeta">0 days prepared</div>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap">
+                            <button class="btn2" type="button" id="buildDailyRowsBtn">Build Daily Rows</button>
+                            <button class="btn2" type="button" id="clearDailyRowsBtn">Clear Rows</button>
                         </div>
                     </div>
 
                     <div class="field" style="margin-top:10px">
-                        <label>People Involved (optional)</label>
-                        <select class="daily-people" name="involved_respondent_ids[]" multiple>
-                            @foreach($respondents as $r)
-                                <option value="{{ $r->id }}" @selected(in_array((string) $r->id, array_map('strval', $oldInvolved), true))>
-                                    {{ $r->name }} @if($r->phone) ({{ $r->phone }}) @endif
-                                </option>
-                            @endforeach
-                        </select>
+                        <label>Total Preview</label>
+                        <input class="input" type="text" id="dailyBillTotalPreview" value="0.00" readonly>
+                        <div class="field-help">Calculated from the row amounts below.</div>
                     </div>
 
-                    <div class="field" style="margin-top:10px">
-                        <label>Notes (optional)</label>
-                        <input class="input" name="notes" value="{{ old('notes') }}" placeholder="Any context for this daily bill">
-                    </div>
+                    <div id="dailyBillEntriesWrap" style="margin-top:12px;display:grid;gap:12px"></div>
 
                     <div class="daily-form-actions">
                         <button class="btn2" type="button" data-daily-close>Cancel</button>
@@ -446,23 +517,32 @@
 
                     <div class="row" style="margin-top:10px">
                         <div class="field" style="flex:1 1 180px">
-                            <label>Receiver Name (optional)</label>
-                            <input class="input" name="receiver_name" value="{{ old('receiver_name') }}">
+                            <label>Receiver Name</label>
+                            <input class="input" name="receiver_name" required value="{{ old('receiver_name') }}">
                         </div>
                         <div class="field" style="flex:1 1 180px">
-                            <label>Receiver Phone (optional)</label>
-                            <input class="input" name="receiver_phone" value="{{ old('receiver_phone') }}">
+                            <label>Receiver Phone</label>
+                            <input class="input" name="receiver_phone" required value="{{ old('receiver_phone') }}">
                         </div>
                     </div>
 
                     <div class="field" style="margin-top:10px">
-                        <label>Description (optional)</label>
-                        <input class="input" name="description" value="{{ old('description') }}" placeholder="Auto-filled if left blank">
+                        <label>Description Mode</label>
+                        <select class="select" name="description_mode" id="mealPaymentDescriptionMode" required>
+                            <option value="auto" @selected(old('description_mode', 'auto') === 'auto')>Auto description</option>
+                            <option value="manual" @selected(old('description_mode') === 'manual')>Manual description</option>
+                        </select>
                     </div>
 
                     <div class="field" style="margin-top:10px">
-                        <label>Notes (optional)</label>
-                        <input class="input" name="notes" value="{{ old('notes') }}">
+                        <label>Description</label>
+                        <input class="input" name="description" id="mealPaymentDescriptionInput" value="{{ old('description') }}" placeholder="Type your own description when manual mode is selected">
+                        <div class="field-help" id="mealPaymentDescriptionHelp">Auto mode builds a fixed description from the selected people, date range, days, and total.</div>
+                    </div>
+
+                    <div class="field" style="margin-top:10px">
+                        <label>Notes</label>
+                        <input class="input" name="notes" required value="{{ old('notes') }}">
                     </div>
 
                     <div class="row" style="margin-top:14px;justify-content:flex-end">
@@ -495,6 +575,130 @@
 
     const dailyBillModal = document.getElementById('dailyBillModal');
     const openDailyBillModalBtn = document.getElementById('openDailyBillModalBtn');
+    const dailyBillForm = document.getElementById('dailyBillForm');
+    const dailyBillRangeFrom = dailyBillForm ? dailyBillForm.querySelector('input[name="range_from"]') : null;
+    const dailyBillRangeTo = dailyBillForm ? dailyBillForm.querySelector('input[name="range_to"]') : null;
+    const dailyBillTotalPreview = document.getElementById('dailyBillTotalPreview');
+    const dailyBillEntriesWrap = document.getElementById('dailyBillEntriesWrap');
+    const dailyBillEntriesMeta = document.getElementById('dailyBillEntriesMeta');
+    const buildDailyRowsBtn = document.getElementById('buildDailyRowsBtn');
+    const clearDailyRowsBtn = document.getElementById('clearDailyRowsBtn');
+    const respondentOptions = @json($respondentOptions);
+    const oldDayEntries = @json($oldDayEntries);
+
+    function parseDate(raw) {
+        if (!raw) return null;
+        const parts = String(raw).split('-').map(Number);
+        if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+        return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+
+    function formatMoney(value) {
+        return Number(value || 0).toFixed(2);
+    }
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function syncDailyBillPreview() {
+        if (!dailyBillTotalPreview) return;
+        let total = 0;
+        if (dailyBillEntriesWrap) {
+            dailyBillEntriesWrap.querySelectorAll('input[data-daily-amount]').forEach((input) => {
+                total += Number(input.value || 0);
+            });
+        }
+        dailyBillTotalPreview.value = formatMoney(total);
+        if (dailyBillEntriesMeta) {
+            const count = dailyBillEntriesWrap ? dailyBillEntriesWrap.querySelectorAll('[data-daily-entry]').length : 0;
+            dailyBillEntriesMeta.textContent = count + ' day' + (count === 1 ? '' : 's') + ' prepared';
+        }
+    }
+
+    function dateToString(date) {
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+
+    function buildRespondentSelect(index, selectedIds) {
+        return `
+            <select class="daily-people" name="day_entries[${index}][respondent_ids][]" multiple required>
+                ${respondentOptions.map((person) => {
+                    const label = person.phone ? `${person.name} (${person.phone})` : person.name;
+                    const selected = selectedIds.includes(String(person.id)) ? ' selected' : '';
+                    return `<option value="${person.id}"${selected}>${escapeHtml(label)}</option>`;
+                }).join('')}
+            </select>
+        `;
+    }
+
+    function buildEntryCard(entry, index) {
+        const respondentIds = Array.isArray(entry.respondent_ids) ? entry.respondent_ids.map(String) : [];
+        return `
+            <div class="summary-card" data-daily-entry>
+                <div class="summary-k">Day ${index + 1}</div>
+                <div class="form-grid-two" style="margin-top:8px">
+                    <div class="field">
+                        <label>Date</label>
+                        <input class="input" type="date" name="day_entries[${index}][date]" value="${escapeHtml(entry.date || '')}" required readonly>
+                    </div>
+                    <div class="field">
+                        <label>Amount Eaten</label>
+                        <input class="input" type="number" step="0.01" min="0.01" name="day_entries[${index}][amount]" value="${escapeHtml(entry.amount || '')}" data-daily-amount required>
+                    </div>
+                </div>
+                <div class="field" style="margin-top:10px">
+                    <label>Respondents For This Day</label>
+                    ${buildRespondentSelect(index, respondentIds)}
+                </div>
+                <div class="field" style="margin-top:10px">
+                    <label>Daily Details</label>
+                    <input class="input" name="day_entries[${index}][notes]" value="${escapeHtml(entry.notes || '')}" placeholder="What was consumed or why this amount was used?" required>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderDailyEntries(entries) {
+        if (!dailyBillEntriesWrap) return;
+        dailyBillEntriesWrap.innerHTML = entries.map((entry, index) => buildEntryCard(entry, index)).join('');
+        dailyBillEntriesWrap.querySelectorAll('input[data-daily-amount]').forEach((input) => {
+            input.addEventListener('input', syncDailyBillPreview);
+            input.addEventListener('change', syncDailyBillPreview);
+        });
+        syncDailyBillPreview();
+    }
+
+    function buildEntriesFromRange() {
+        const from = parseDate(dailyBillRangeFrom ? dailyBillRangeFrom.value : '');
+        const to = parseDate(dailyBillRangeTo ? dailyBillRangeTo.value : '');
+        if (!from || !to) return;
+
+        const start = from <= to ? from : to;
+        const end = from <= to ? to : from;
+        const entries = [];
+        const cursor = new Date(start);
+
+        while (cursor <= end) {
+            entries.push({
+                date: dateToString(cursor),
+                amount: '',
+                notes: '',
+                respondent_ids: [],
+            });
+            cursor.setDate(cursor.getDate() + 1);
+        }
+
+        renderDailyEntries(entries);
+    }
 
     function openDailyModal() {
         if (!dailyBillModal) return;
@@ -528,6 +732,21 @@
         if (openDailyBillModal) {
             openDailyModal();
         }
+
+        if (buildDailyRowsBtn) {
+            buildDailyRowsBtn.addEventListener('click', buildEntriesFromRange);
+        }
+        if (clearDailyRowsBtn) {
+            clearDailyRowsBtn.addEventListener('click', function () {
+                renderDailyEntries([]);
+            });
+        }
+
+        if (Array.isArray(oldDayEntries) && oldDayEntries.length > 0) {
+            renderDailyEntries(oldDayEntries);
+        } else {
+            syncDailyBillPreview();
+        }
     }
 
     if (!canRecordPayment) return;
@@ -547,6 +766,9 @@
     const payAmount = document.getElementById('payAmount');
     const payRange = document.getElementById('payRange');
     const payPeople = document.getElementById('payPeople');
+    const descriptionMode = document.getElementById('mealPaymentDescriptionMode');
+    const descriptionInput = document.getElementById('mealPaymentDescriptionInput');
+    const descriptionHelp = document.getElementById('mealPaymentDescriptionHelp');
 
     const funding = document.getElementById('payFunding');
     const batchWrap = document.getElementById('payBatchWrap');
@@ -588,6 +810,32 @@
         if (payAmount) payAmount.textContent = '0.00';
         if (payRange) payRange.textContent = '-';
         if (payPeople) payPeople.textContent = '-';
+        syncDescriptionMode();
+    }
+
+    function currentAutoDescription() {
+        const people = String(payPeople ? payPeople.textContent || '-' : '-').trim();
+        const range = String(payRange ? payRange.textContent || '-' : '-').trim();
+        const days = String(payDays ? payDays.textContent || '0' : '0').trim();
+        const total = String(payAmount ? payAmount.textContent || '0.00' : '0.00').trim();
+        return 'Meal bill for ' + people + ', for ' + range + ', ' + days + ' day(s), total ' + total;
+    }
+
+    function syncDescriptionMode() {
+        if (!descriptionMode || !descriptionInput) return;
+        const isManual = descriptionMode.value === 'manual';
+        descriptionInput.required = isManual;
+        descriptionInput.readOnly = !isManual;
+        if (descriptionHelp) {
+            descriptionHelp.textContent = isManual
+                ? 'Manual mode requires a typed description before saving.'
+                : 'Auto mode builds a fixed description from the selected people, date range, days, and total.';
+        }
+        if (!isManual) {
+            descriptionInput.value = currentAutoDescription();
+        } else if (descriptionInput.value === currentAutoDescription()) {
+            descriptionInput.value = '';
+        }
     }
 
     function setHiddenIds(ids) {
@@ -656,6 +904,7 @@
                     payPeople.textContent = people.length ? people.join(', ') : '-';
                 }
 
+                syncDescriptionMode();
                 openModal();
             })
             .catch(err => {
@@ -724,8 +973,12 @@
     if (funding) {
         funding.addEventListener('change', syncFunding);
     }
+    if (descriptionMode) {
+        descriptionMode.addEventListener('change', syncDescriptionMode);
+    }
 
     syncFunding();
+    syncDescriptionMode();
     syncBulkActions();
     syncSelectAllState();
 

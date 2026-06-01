@@ -67,6 +67,30 @@ class InsightsController extends Controller
 
         $typeTotals = $summary['typeTotals'] ?? [];
         $typeTotals['bike:service'] = round($serviceSpentNet, 2);
+        $categoryBreakdown = collect($typeTotals)
+            ->map(function ($total, $bucket) use ($totalSpent) {
+                $label = str_contains((string) $bucket, ':')
+                    ? explode(':', (string) $bucket, 2)[0]
+                    : (string) $bucket;
+
+                return [
+                    'bucket' => (string) $bucket,
+                    'label' => ucfirst(str_replace('_', ' ', $label)),
+                    'amount' => round((float) $total, 2),
+                ];
+            })
+            ->groupBy('label')
+            ->map(function ($rows, $label) use ($totalSpent) {
+                $amount = round((float) collect($rows)->sum('amount'), 2);
+
+                return [
+                    'label' => (string) $label,
+                    'amount' => $amount,
+                    'percentage' => $totalSpent > 0 ? round(($amount / $totalSpent) * 100, 2) : 0.0,
+                ];
+            })
+            ->sortByDesc('amount')
+            ->values();
 
         return $this->successResponse([
             'summary' => [
@@ -80,6 +104,7 @@ class InsightsController extends Controller
             ],
             'type_totals' => $typeTotals,
             'by_type' => $summary['byType'] ?? [],
+            'category_breakdown' => $categoryBreakdown,
             'top_bucket' => $summary['topBucket'] ?? null,
             'service_widgets' => [
                 'overdue' => $serviceOverdue->map(fn (Bike $bike) => $this->mapBikeWidget($bike))->values(),

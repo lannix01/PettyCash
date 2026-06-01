@@ -3,14 +3,15 @@
 namespace App\Modules\PettyCash\Controllers\Spending;
 
 use App\Http\Controllers\Controller;
-use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use App\Modules\PettyCash\Models\Batch;
 use App\Modules\PettyCash\Models\Bike;
 use App\Modules\PettyCash\Models\Respondent;
 use App\Modules\PettyCash\Models\Spending;
 use App\Modules\PettyCash\Services\FundsAllocatorService;
+use App\Modules\PettyCash\Support\PettyAccess;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use App\Modules\PettyCash\Support\TabularExport;
+use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
 
 class BikeController extends Controller
@@ -21,6 +22,12 @@ class BikeController extends Controller
         $to = $request->query('to');
         $sub = $request->query('sub_type');
         $batchId = $request->query('batch_id');
+        $q = trim((string) $request->query('q', ''));
+        $sort = strtolower(trim((string) $request->query('sort', 'date_desc')));
+        $allowedSorts = ['date_desc', 'date_asc', 'amount_desc', 'amount_asc'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'date_desc';
+        }
 
         $query = Spending::with(['respondent', 'bike', 'batch', 'allocations.batch'])
             ->where('type', 'bike')
@@ -29,25 +36,34 @@ class BikeController extends Controller
             ->when($batchId, fn($q) => $q->whereHas('allocations', fn($a) => $a->where('batch_id', $batchId)))
             ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
             ->when($to, fn($q) => $q->whereDate('date', '<=', $to))
-            ->orderByDesc('date')
-            ->orderByDesc('id');
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    $inner->where('reference', 'like', '%' . $q . '%')
+                        ->orWhere('description', 'like', '%' . $q . '%')
+                        ->orWhere('particulars', 'like', '%' . $q . '%')
+                        ->orWhereHas('bike', fn ($bike) => $bike->where('plate_no', 'like', '%' . $q . '%')->orWhere('model', 'like', '%' . $q . '%'))
+                        ->orWhereHas('respondent', fn ($respondent) => $respondent->where('name', 'like', '%' . $q . '%')->orWhere('phone', 'like', '%' . $q . '%'))
+                        ->orWhereHas('batch', fn ($batch) => $batch->where('batch_no', 'like', '%' . $q . '%'));
+                });
+            });
+
+        match ($sort) {
+            'date_asc' => $query->orderBy('date')->orderBy('id'),
+            'amount_desc' => $query->orderByDesc('amount')->orderByDesc('date')->orderByDesc('id'),
+            'amount_asc' => $query->orderBy('amount')->orderByDesc('date')->orderByDesc('id'),
+            default => $query->orderByDesc('date')->orderByDesc('id'),
+        };
 
         $spendings = $query->paginate(20)->withQueryString();
 
-        // NET total via allocations (amount+fee)
-        $total = (float) DB::table('petty_spending_allocations')
-            ->join('petty_spendings', 'petty_spendings.id', '=', 'petty_spending_allocations.spending_id')
-            ->where('petty_spendings.type', 'bike')
-            ->when($sub, fn($q) => $q->where('petty_spendings.sub_type', $sub))
-            ->when($batchId, fn($q) => $q->where('petty_spending_allocations.batch_id', $batchId))
-            ->when($from, fn($q) => $q->whereDate('petty_spendings.date', '>=', $from))
-            ->when($to, fn($q) => $q->whereDate('petty_spendings.date', '<=', $to))
-            ->selectRaw('COALESCE(SUM(petty_spending_allocations.amount + petty_spending_allocations.transaction_cost),0) as t')
-            ->value('t');
+        $total = (float) (clone $query)
+            ->reorder()
+            ->selectRaw('COALESCE(SUM(amount + COALESCE(transaction_cost, 0)), 0) as total_amount')
+            ->value('total_amount');
 
         $batches = Batch::orderByDesc('id')->limit(50)->get();
 
-        return view('pettycash::spendings.bikes.index', compact('spendings', 'total', 'from', 'to', 'sub', 'batchId', 'batches'));
+        return view('pettycash::spendings.bikes.index', compact('spendings', 'total', 'from', 'to', 'sub', 'batchId', 'batches', 'q', 'sort'));
     }
 
     public function create(Request $request)
@@ -57,8 +73,14 @@ class BikeController extends Controller
         $batches = $allocator->batchesWithNetAvailable();
         $totalBalance = $allocator->totalNetBalance();
 
-        $bikes = Bike::orderBy('plate_no')->get();
-        $respondents = Respondent::orderBy('name')->get();
+        $bikes = Bike::query()
+            ->where('status', Bike::STATUS_ACTIVE)
+            ->orderBy('plate_no')
+            ->get();
+        $respondents = Respondent::query()
+            ->selectable()
+            ->orderBy('name')
+            ->get();
 
         $prefBatchId = $request->query('batch_id');
         $prefBikeId = $request->query('bike_id');
@@ -85,6 +107,23 @@ class BikeController extends Controller
             'particulars' => ['nullable', 'string'],
         ]);
 
+        $bike = Bike::query()->findOrFail((int) $data['bike_id']);
+        if (!$bike->isSelectableForSpending()) {
+            return back()->withErrors([
+                'bike_id' => 'Only active bikes can be selected for new spending records.',
+            ])->withInput();
+        }
+
+        $respondentId = !empty($data['respondent_id']) ? (int) $data['respondent_id'] : null;
+        if ($respondentId) {
+            $respondent = Respondent::query()->findOrFail($respondentId);
+            if (!$respondent->isSelectableForSpending()) {
+                return back()->withErrors([
+                    'respondent_id' => 'Only active respondents can be selected for new spending records.',
+                ])->withInput();
+            }
+        }
+
         if ($data['funding'] === 'single' && empty($data['batch_id'])) {
             return back()->withErrors(['batch_id' => 'Batch is required in Single Batch mode.'])->withInput();
         }
@@ -99,7 +138,7 @@ class BikeController extends Controller
         $allocator = app(FundsAllocatorService::class);
 
         try {
-            return DB::transaction(function () use ($data, $amount, $fee, $allocator) {
+            return PettyDatabase::transaction(function () use ($data, $amount, $fee, $allocator) {
                 $spending = Spending::create([
                     'batch_id' => null, // allocator will set primary batch
                     'type' => 'bike',
@@ -139,7 +178,7 @@ class BikeController extends Controller
 
         $spendings = $query->paginate(20)->withQueryString();
 
-        $total = (float) DB::table('petty_spending_allocations')
+        $total = (float) PettyDatabase::table('petty_spending_allocations')
             ->join('petty_spendings', 'petty_spendings.id', '=', 'petty_spending_allocations.spending_id')
             ->where('petty_spendings.type', 'bike')
             ->where('petty_spendings.related_id', $bike->id)
@@ -158,15 +197,38 @@ class BikeController extends Controller
         $to = $request->query('to');
         $sub = $request->query('sub_type');
         $batchId = $request->query('batch_id');
+        $q = trim((string) $request->query('q', ''));
+        $sort = strtolower(trim((string) $request->query('sort', 'date_desc')));
+        $allowedSorts = ['date_desc', 'date_asc', 'amount_desc', 'amount_asc'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'date_desc';
+        }
 
-        $spendings = Spending::with(['respondent', 'bike', 'batch', 'allocations.batch'])
+        $spendingsQuery = Spending::with(['respondent', 'bike', 'batch', 'allocations.batch'])
             ->where('type', 'bike')
             ->when($sub, fn($q) => $q->where('sub_type', $sub))
             ->when($batchId, fn($q) => $q->whereHas('allocations', fn($a) => $a->where('batch_id', $batchId)))
             ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
             ->when($to, fn($q) => $q->whereDate('date', '<=', $to))
-            ->orderByDesc('date')
-            ->get();
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($inner) use ($q) {
+                    $inner->where('reference', 'like', '%' . $q . '%')
+                        ->orWhere('description', 'like', '%' . $q . '%')
+                        ->orWhere('particulars', 'like', '%' . $q . '%')
+                        ->orWhereHas('bike', fn ($bike) => $bike->where('plate_no', 'like', '%' . $q . '%')->orWhere('model', 'like', '%' . $q . '%'))
+                        ->orWhereHas('respondent', fn ($respondent) => $respondent->where('name', 'like', '%' . $q . '%')->orWhere('phone', 'like', '%' . $q . '%'))
+                        ->orWhereHas('batch', fn ($batch) => $batch->where('batch_no', 'like', '%' . $q . '%'));
+                });
+            });
+
+        match ($sort) {
+            'date_asc' => $spendingsQuery->orderBy('date')->orderBy('id'),
+            'amount_desc' => $spendingsQuery->orderByDesc('amount')->orderByDesc('date')->orderByDesc('id'),
+            'amount_asc' => $spendingsQuery->orderBy('amount')->orderByDesc('date')->orderByDesc('id'),
+            default => $spendingsQuery->orderByDesc('date')->orderByDesc('id'),
+        };
+
+        $spendings = $spendingsQuery->get();
 
         if (in_array($format, ['csv', 'excel', 'xls', 'xlsx'], true)) {
             $rows = $spendings->map(function ($s) {
@@ -216,15 +278,10 @@ class BikeController extends Controller
             );
         }
 
-        $total = (float) DB::table('petty_spending_allocations')
-            ->join('petty_spendings', 'petty_spendings.id', '=', 'petty_spending_allocations.spending_id')
-            ->where('petty_spendings.type', 'bike')
-            ->when($sub, fn($q) => $q->where('petty_spendings.sub_type', $sub))
-            ->when($batchId, fn($q) => $q->where('petty_spending_allocations.batch_id', $batchId))
-            ->when($from, fn($q) => $q->whereDate('petty_spendings.date', '>=', $from))
-            ->when($to, fn($q) => $q->whereDate('petty_spendings.date', '<=', $to))
-            ->selectRaw('COALESCE(SUM(petty_spending_allocations.amount + petty_spending_allocations.transaction_cost),0) as t')
-            ->value('t');
+        $total = (float) (clone $spendingsQuery)
+            ->reorder()
+            ->selectRaw('COALESCE(SUM(amount + COALESCE(transaction_cost, 0)), 0) as total_amount')
+            ->value('total_amount');
 
         $pdf = Pdf::loadView('pettycash::reports.bikes_spendings_pdf', [
             'spendings' => $spendings,
@@ -243,8 +300,20 @@ class BikeController extends Controller
         abort_unless($spending->type === 'bike', 404);
 
         $batches = Batch::orderByDesc('id')->limit(50)->get();
-        $bikes = Bike::orderBy('plate_no')->get();
-        $respondents = Respondent::orderBy('name')->get();
+        $bikes = Bike::query()
+            ->where(function ($query) use ($spending) {
+                $query->where('status', Bike::STATUS_ACTIVE)
+                    ->orWhere('id', (int) $spending->related_id);
+            })
+            ->orderBy('plate_no')
+            ->get();
+        $respondents = Respondent::query()
+            ->where(function ($query) use ($spending) {
+                $query->where('status', Respondent::STATUS_ACTIVE)
+                    ->orWhere('id', (int) $spending->respondent_id);
+            })
+            ->orderBy('name')
+            ->get();
 
         return view('pettycash::spendings.bikes.edit', compact('spending', 'batches', 'bikes', 'respondents'));
     }
@@ -268,6 +337,23 @@ class BikeController extends Controller
             'particulars' => ['nullable', 'string'],
         ]);
 
+        $bike = Bike::query()->findOrFail((int) $data['bike_id']);
+        if ((int) $bike->id !== (int) $spending->related_id && !$bike->isSelectableForSpending()) {
+            return back()->withErrors([
+                'bike_id' => 'Only active bikes can be selected for new spending records.',
+            ])->withInput();
+        }
+
+        $respondentId = !empty($data['respondent_id']) ? (int) $data['respondent_id'] : null;
+        if ($respondentId) {
+            $respondent = Respondent::query()->findOrFail($respondentId);
+            if ((int) $respondent->id !== (int) $spending->respondent_id && !$respondent->isSelectableForSpending()) {
+                return back()->withErrors([
+                    'respondent_id' => 'Only active respondents can be selected for new spending records.',
+                ])->withInput();
+            }
+        }
+
         if ($data['sub_type'] === 'maintenance' && empty(trim((string)($data['particulars'] ?? '')))) {
             return back()->withErrors(['particulars' => 'Particulars is required for maintenance.'])->withInput();
         }
@@ -278,7 +364,7 @@ class BikeController extends Controller
         $allocator = app(FundsAllocatorService::class);
 
         try {
-            return DB::transaction(function () use ($spending, $data, $amount, $fee, $allocator) {
+            return PettyDatabase::transaction(function () use ($spending, $data, $amount, $fee, $allocator) {
                 $spending->update([
                     'sub_type' => $data['sub_type'],
                     'reference' => $data['reference'],
@@ -293,12 +379,27 @@ class BikeController extends Controller
 
                 // default to single-batch on edit (safe)
                 $onlyBatch = (int)$data['batch_id'];
-                $allocator->allocateSmallestFirst($spending, $amount, $fee, $onlyBatch);
+                $allocator->forceAllocateToBatch($spending, $amount, $fee, $onlyBatch);
 
                 return redirect()->route('petty.bikes.index')->with('success', 'Bike spending updated.');
             });
         } catch (\Throwable $e) {
             return back()->withErrors(['amount' => $e->getMessage()])->withInput();
         }
+    }
+
+    public function destroy(Spending $spending)
+    {
+        abort_unless(PettyAccess::isAdmin(auth('petty')->user()), 403);
+        abort_unless($spending->type === 'bike', 404);
+
+        PettyDatabase::transaction(function () use ($spending) {
+            \App\Modules\PettyCash\Models\SpendingAllocation::query()
+                ->where('spending_id', $spending->id)
+                ->delete();
+            $spending->delete();
+        });
+
+        return redirect()->route('petty.bikes.index')->with('success', 'Bike spending deleted.');
     }
 }

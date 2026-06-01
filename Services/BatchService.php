@@ -4,14 +4,14 @@ namespace App\Modules\PettyCash\Services;
 
 use App\Modules\PettyCash\Models\Batch;
 use App\Modules\PettyCash\Models\Credit;
-use Illuminate\Support\Facades\DB;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use Carbon\Carbon;
 
 class BatchService
 {
     public function createBatchWithCredit(array $data, ?int $userId = null): Batch
     {
-        return DB::transaction(function () use ($data, $userId) {
+        return PettyDatabase::transaction(function () use ($data, $userId) {
 
             // New format: PC-Jan12, PC-Jan12-A, PC-Jan12-B...
             $batchNo = $this->generateBatchNo($data['date']);

@@ -8,7 +8,7 @@ use Illuminate\Support\Carbon;
 use App\Modules\PettyCash\Models\Bike;
 use App\Modules\PettyCash\Models\Spending;
 use App\Modules\PettyCash\Models\BikeService;
-use Illuminate\Support\Facades\DB;
+use App\Modules\PettyCash\Support\PettyDatabase;
 
 class MaintenancesController extends Controller
 {
@@ -146,7 +146,7 @@ class MaintenancesController extends Controller
             'transaction_cost' => ['nullable', 'numeric', 'min:0'],
         ]);
 
-        return DB::transaction(function () use ($bikeId, $data) {
+        return PettyDatabase::transaction(function () use ($bikeId, $data) {
             $bike = Bike::lockForUpdate()->findOrFail($bikeId);
 
             $service = new BikeService();

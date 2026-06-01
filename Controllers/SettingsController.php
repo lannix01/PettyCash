@@ -7,11 +7,11 @@ use App\Modules\PettyCash\Models\PettyNotificationSetting;
 use App\Modules\PettyCash\Models\PettyUser;
 use App\Modules\PettyCash\Models\PettyUserPermission;
 use App\Modules\PettyCash\Support\PettyAccess;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use App\Services\Sms\AdvantaSmsService;
 use App\Services\Sms\AmazonsSmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Schema;
 
 class SettingsController extends Controller
 {
@@ -39,7 +39,7 @@ class SettingsController extends Controller
         return view('pettycash::settings.index', [
             'users' => $users,
             'selectedUser' => $selectedUser,
-            'supportsPhoneNo' => Schema::hasColumn('petty_users', 'phone_no'),
+            'supportsPhoneNo' => PettyDatabase::schema()->hasColumn('petty_users', 'phone_no'),
             'roleOptions' => PettyAccess::roleOptions(),
             'permissionCatalog' => PettyAccess::permissionCatalog(),
             'selectedExplicitPermissions' => $selectedExplicitPermissions,
@@ -53,7 +53,7 @@ class SettingsController extends Controller
         abort_unless(PettyAccess::isAdmin($currentUser), 403);
 
         $roleValues = array_keys(PettyAccess::roleOptions());
-        $hasPhoneNo = Schema::hasColumn('petty_users', 'phone_no');
+        $hasPhoneNo = PettyDatabase::schema()->hasColumn('petty_users', 'phone_no');
 
         $data = $request->validateWithBag('updateUser', [
             'role' => ['required', 'string', 'in:' . implode(',', $roleValues)],
@@ -81,7 +81,7 @@ class SettingsController extends Controller
             'role' => $targetRole,
             'is_active' => $targetActive,
         ]);
-        if (Schema::hasColumn('petty_users', 'phone_no')) {
+        if (PettyDatabase::schema()->hasColumn('petty_users', 'phone_no')) {
             $user->phone_no = trim((string) ($data['phone_no'] ?? '')) ?: null;
         }
 
@@ -91,7 +91,7 @@ class SettingsController extends Controller
 
         $user->save();
 
-        if (!Schema::hasTable('petty_user_permissions')) {
+        if (!PettyDatabase::schema()->hasTable('petty_user_permissions')) {
             return redirect()
                 ->route('petty.settings.index', ['user' => $user->id])
                 ->with('error', 'Role updated, but permissions table is missing. Run migrations and try again.');
@@ -134,7 +134,7 @@ class SettingsController extends Controller
         abort_unless(PettyAccess::isAdmin($currentUser), 403);
 
         $roleValues = array_keys(PettyAccess::roleOptions());
-        $hasPhoneNo = Schema::hasColumn('petty_users', 'phone_no');
+        $hasPhoneNo = PettyDatabase::schema()->hasColumn('petty_users', 'phone_no');
 
         $data = $request->validateWithBag('createUser', [
             'create.name' => ['required', 'string', 'max:120'],
@@ -198,7 +198,7 @@ class SettingsController extends Controller
      */
     private function sendLoginSmsForCreatedUser(PettyUser $user, string $plainPassword): array
     {
-        if (!Schema::hasColumn('petty_users', 'phone_no')) {
+        if (!PettyDatabase::schema()->hasColumn('petty_users', 'phone_no')) {
             return [
                 'sent' => false,
                 'message' => 'phone field is missing (run migrations).',
@@ -275,7 +275,7 @@ class SettingsController extends Controller
             ];
         }
 
-        if (Schema::hasColumn('petty_users', 'login_sms_sent_at')) {
+        if (PettyDatabase::schema()->hasColumn('petty_users', 'login_sms_sent_at')) {
             $user->login_sms_sent_at = now();
             $user->save();
         }

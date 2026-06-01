@@ -15,8 +15,8 @@ class ReportService
             ->when($batchIds && count($batchIds), fn($q) => $q->whereIn('batch_id', $batchIds))
             ->when($from, fn($q) => $q->whereDate('date', '>=', $from))
             ->when($to, fn($q) => $q->whereDate('date', '<=', $to))
-            ->orderBy('date')
-            ->orderBy('id')
+            ->orderByDesc('date')
+            ->orderByDesc('id')
             ->get();
     }
 
@@ -56,7 +56,7 @@ class ReportService
             });
         }
 
-        return $q->orderBy('date')->orderBy('id')->get();
+        return $q->orderByDesc('date')->orderByDesc('id')->get();
     }
 
     /**

@@ -7,9 +7,9 @@ use App\Modules\PettyCash\Models\Batch;
 use App\Modules\PettyCash\Models\Credit;
 use App\Modules\PettyCash\Services\BatchService;
 use App\Modules\PettyCash\Support\ApiResponder;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class CreditController extends Controller
 {
@@ -113,7 +113,7 @@ class CreditController extends Controller
             ]);
         }
 
-        DB::transaction(function () use ($credit, $data) {
+        PettyDatabase::transaction(function () use ($credit, $data) {
             $credit->update([
                 'reference' => array_key_exists('reference', $data) ? $data['reference'] : $credit->reference,
                 'amount' => array_key_exists('amount', $data) ? $data['amount'] : $credit->amount,

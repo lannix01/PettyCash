@@ -2,12 +2,16 @@
 
 namespace App\Modules\PettyCash\Models;
 
+use App\Modules\PettyCash\Support\PettyDatabase;
+use App\Modules\PettyCash\Support\UsesPettyConnection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\Schema;
 
 class PettyApiToken extends Model
 {
+    use UsesPettyConnection;
+
     protected $table = 'petty_api_tokens';
 
     protected $fillable = [
@@ -52,7 +56,7 @@ class PettyApiToken extends Model
         static $cache = [];
 
         if (!array_key_exists($column, $cache)) {
-            $cache[$column] = Schema::hasColumn('petty_api_tokens', $column);
+            $cache[$column] = Schema::connection(PettyDatabase::connectionName())->hasColumn('petty_api_tokens', $column);
         }
 
         return $cache[$column];

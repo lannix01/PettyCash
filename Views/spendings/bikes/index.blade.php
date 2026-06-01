@@ -17,11 +17,22 @@
     .row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}
     .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:#f2f4f7;font-size:12px}
     .success{background:#ecfdf3;border:1px solid #abefc6;color:#027a48;padding:10px;border-radius:10px;margin-top:12px}
+    .status-pill{display:inline-flex;align-items:center;padding:3px 8px;border-radius:999px;border:1px solid #d0d5dd;font-size:11px;font-weight:700;margin-top:4px}
+    .status-pill-active{background:#ecfdf3;border-color:#abefc6;color:#027a48}
+    .status-pill-inactive{background:#f2f4f7;border-color:#eaecf0;color:#475467}
+    .status-pill-flagged{background:#fffaeb;border-color:#fedf89;color:#b54708}
+    .status-pill-disabled{background:#fef3f2;border-color:#fecdca;color:#b42318}
 </style>
 @endpush
 
 @section('content')
-<div class="wrap">
+@php
+    $pettyUser = auth('petty')->user();
+    $canEditBikeSpending = \App\Modules\PettyCash\Support\PettyAccess::allows($pettyUser, 'bikes.edit');
+    $canDeleteBikeSpending = \App\Modules\PettyCash\Support\PettyAccess::isAdmin($pettyUser);
+@endphp
+<div class="wrap pc-list-shell" data-pc-list-root="bikes-spendings-index" data-pc-ajax="1">
+    <div class="pc-inline-refresh"><span class="spinner"></span><span>Refreshing records...</span></div>
     <div class="top">
         <div>
             <h2 style="margin:0">Fuel/Maintenance Expenses</h2>
@@ -31,9 +42,9 @@
             <a class="btn" href="{{ route('petty.bikes.create') }}">+ New Spending</a>
             @include('pettycash::partials.export_select', [
                 'options' => [
-                    'PDF' => route('petty.bikes.pdf', ['from'=>$from,'to'=>$to,'sub_type'=>$sub,'batch_id'=>$batchId,'format'=>'pdf']),
-                    'CSV' => route('petty.bikes.pdf', ['from'=>$from,'to'=>$to,'sub_type'=>$sub,'batch_id'=>$batchId,'format'=>'csv']),
-                    'Excel' => route('petty.bikes.pdf', ['from'=>$from,'to'=>$to,'sub_type'=>$sub,'batch_id'=>$batchId,'format'=>'excel']),
+                    'PDF' => route('petty.bikes.pdf', ['from'=>$from,'to'=>$to,'sub_type'=>$sub,'batch_id'=>$batchId,'q'=>$q,'sort'=>$sort,'format'=>'pdf']),
+                    'CSV' => route('petty.bikes.pdf', ['from'=>$from,'to'=>$to,'sub_type'=>$sub,'batch_id'=>$batchId,'q'=>$q,'sort'=>$sort,'format'=>'csv']),
+                    'Excel' => route('petty.bikes.pdf', ['from'=>$from,'to'=>$to,'sub_type'=>$sub,'batch_id'=>$batchId,'q'=>$q,'sort'=>$sort,'format'=>'excel']),
                 ],
             ])
         </div>
@@ -41,13 +52,17 @@
 
     <div class="card">
         <div class="pc-filter-dock">
-            <details class="pc-filter-panel" @if(filled($from) || filled($to) || filled($sub) || filled($batchId)) open @endif>
+            <details class="pc-filter-panel" open data-filter-pinned="1">
                 <summary>
                     <span class="pc-filter-title">Filters</span>
-                    <span class="pc-filter-state">{{ filled($from) || filled($to) || filled($sub) || filled($batchId) ? 'active' : 'optional' }}</span>
+                    <span class="pc-filter-state">live</span>
                 </summary>
                 <div class="pc-filter-body">
-                    <form method="GET" class="row pc-filter-row" action="{{ route('petty.bikes.index') }}">
+                    <form method="GET" class="row pc-filter-row" action="{{ route('petty.bikes.index') }}" data-pc-auto-filter="1" data-pc-list-root-id="bikes-spendings-index">
+                        <div class="pc-filter-grow">
+                            <div class="muted">Search</div>
+                            <input type="search" name="q" value="{{ $q }}" placeholder="Plate, ref, respondent, batch, particulars">
+                        </div>
                         <div>
                             <div class="muted">From</div>
                             <input type="date" name="from" value="{{ $from }}">
@@ -73,9 +88,19 @@
                                 @endforeach
                             </select>
                         </div>
-
-                        <button class="btn" type="submit">Filter</button>
-                        <a class="btn2" href="{{ route('petty.bikes.index') }}">Reset</a>
+                        <div>
+                            <div class="muted">Sort</div>
+                            <select name="sort">
+                                <option value="date_desc" @selected($sort === 'date_desc')>Newest First</option>
+                                <option value="date_asc" @selected($sort === 'date_asc')>Oldest First</option>
+                                <option value="amount_desc" @selected($sort === 'amount_desc')>Amount High-Low</option>
+                                <option value="amount_asc" @selected($sort === 'amount_asc')>Amount Low-High</option>
+                            </select>
+                        </div>
+                        <div class="pc-filter-actions">
+                            <button class="btn" type="submit">Apply</button>
+                            <a class="btn2" href="{{ route('petty.bikes.index') }}">Reset</a>
+                        </div>
                     </form>
                 </div>
             </details>
@@ -104,12 +129,14 @@
                 <tr>
                     <td>{{ $s->date?->format('Y-m-d') }}</td>
                     <td>
-    @if($s->bike)
-        <a href="{{ route('petty.bikes.byBike', $s->bike->id) }}">{{ $s->bike->plate_no }}</a>
-    @else
-        -
-    @endif
-</td>
+                        @if($s->bike)
+                            <a href="{{ route('petty.bikes.byBike', $s->bike->id) }}">{{ $s->bike->plate_no }}</a>
+                            @php $bikeStatus = $s->bike->normalizedStatus(); @endphp
+                            <div><span class="status-pill status-pill-{{ $bikeStatus }}">{{ $s->bike->statusLabel() }}</span></div>
+                        @else
+                            -
+                        @endif
+                    </td>
 
                     <td><span class="pill">{{ strtolower($s->sub_type ?? '-') }}</span></td>
                     <td>{{ $s->reference }}</td>
@@ -119,8 +146,20 @@
                     <td>{{ $s->particulars }}</td>
                     <td>{{ $s->batch?->batch_no ?? '-' }}</td>
                     <td>
-  <a href="{{ route('petty.bikes.edit', $s->id) }}">Edit</a>
-</td>
+                        @if($canEditBikeSpending)
+                            <a href="{{ route('petty.bikes.edit', $s->id) }}">Edit</a>
+                        @endif
+                        @if($canDeleteBikeSpending)
+                            <form method="POST" action="{{ route('petty.bikes.destroy', $s->id) }}" style="display:inline-block;margin-left:8px" data-confirm="Delete this bike spending?">
+                                @csrf
+                                @method('DELETE')
+                                <button type="submit" style="border:none;background:none;color:#b42318;cursor:pointer;padding:0">Delete</button>
+                            </form>
+                        @endif
+                        @if(!$canEditBikeSpending && !$canDeleteBikeSpending)
+                            <span class="muted">-</span>
+                        @endif
+                    </td>
 
                 </tr>
             @empty

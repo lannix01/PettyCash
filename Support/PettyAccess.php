@@ -3,7 +3,6 @@
 namespace App\Modules\PettyCash\Support;
 
 use App\Modules\PettyCash\Models\PettyUser;
-use Illuminate\Support\Facades\Schema;
 
 class PettyAccess
 {
@@ -51,7 +50,10 @@ class PettyAccess
             'dashboard' => [
                 'label' => 'Dashboard',
                 'actions' => [
-                    'view' => 'View dashboard',
+                    'view' => 'Open dashboard',
+                    'summary' => 'View summary mini dashboard cards',
+                    'category_totals' => 'View category totals mini dashboard',
+                    'breakdown' => 'View breakdown mini dashboard',
                 ],
             ],
             'reports' => [
@@ -72,6 +74,7 @@ class PettyAccess
                     'view' => 'View credits',
                     'create' => 'Create credits',
                     'edit' => 'Edit credits',
+                    'delete' => 'Delete credits',
                 ],
             ],
             'batches' => [
@@ -86,6 +89,7 @@ class PettyAccess
                     'view' => 'View bike spendings',
                     'create' => 'Create bike spendings',
                     'edit' => 'Edit bike spendings',
+                    'delete' => 'Delete bike spendings',
                 ],
             ],
             'meals' => [
@@ -94,6 +98,7 @@ class PettyAccess
                     'view' => 'View meal spendings',
                     'create' => 'Create meal spendings',
                     'edit' => 'Edit meal spendings',
+                    'delete' => 'Delete meal spendings',
                 ],
             ],
             'meals_daily' => [
@@ -101,7 +106,11 @@ class PettyAccess
                 'actions' => [
                     'view' => 'View daily meal spendings and bills',
                     'create' => 'Record daily meal spendings',
+                    'edit_bill' => 'Edit daily meal bills',
+                    'delete_bill' => 'Delete daily meal bills',
                     'record_payment' => 'Record meal bill payments',
+                    'edit_payment' => 'Edit meal bill payments',
+                    'delete_payment' => 'Delete meal bill payments',
                 ],
             ],
             'tokens' => [
@@ -112,6 +121,7 @@ class PettyAccess
                     'edit_hostel' => 'Edit hostel details',
                     'record_payment' => 'Record payments',
                     'edit_payment' => 'Edit payments',
+                    'delete_payment' => 'Delete payments',
                 ],
             ],
             'others' => [
@@ -120,6 +130,7 @@ class PettyAccess
                     'view' => 'View other spendings',
                     'create' => 'Create other spendings',
                     'edit' => 'Edit other spendings',
+                    'delete' => 'Delete other spendings',
                 ],
             ],
             'bikes_master' => [
@@ -128,6 +139,7 @@ class PettyAccess
                     'view' => 'View vehicles',
                     'create' => 'Create vehicles',
                     'edit' => 'Edit vehicles',
+                    'delete' => 'Delete vehicles',
                 ],
             ],
             'respondents' => [
@@ -136,6 +148,7 @@ class PettyAccess
                     'view' => 'View respondents',
                     'create' => 'Create respondents',
                     'edit' => 'Edit respondents',
+                    'delete' => 'Delete respondents',
                 ],
             ],
             'maintenances' => [
@@ -195,6 +208,7 @@ class PettyAccess
             'petty.credits.store' => 'credits.create',
             'petty.credits.edit' => 'credits.edit',
             'petty.credits.update' => 'credits.edit',
+            'petty.credits.destroy' => 'credits.delete',
 
             'petty.batches.index' => 'batches.view',
             'petty.batches.show' => 'batches.view',
@@ -206,6 +220,7 @@ class PettyAccess
             'petty.bikes.store' => 'bikes.create',
             'petty.bikes.edit' => 'bikes.edit',
             'petty.bikes.update' => 'bikes.edit',
+            'petty.bikes.destroy' => 'bikes.delete',
 
             'petty.meals.index' => 'meals.view',
             'petty.meals.pdf' => 'meals.view',
@@ -213,13 +228,38 @@ class PettyAccess
             'petty.meals.store' => 'meals.create',
             'petty.meals.edit' => 'meals.edit',
             'petty.meals.update' => 'meals.edit',
+            'petty.meals.destroy' => 'meals.delete',
 
             'petty.meals.daily.index' => 'meals_daily.view',
             'petty.meals.daily.calculate' => 'meals_daily.record_payment',
             'petty.meals.daily.store' => 'meals_daily.create',
+            'petty.meals.daily.edit' => 'meals_daily.edit_bill',
+            'petty.meals.daily.update' => 'meals_daily.edit_bill',
+            'petty.meals.daily.destroy' => 'meals_daily.delete_bill',
             'petty.meals.daily.payments.store' => 'meals_daily.record_payment',
+            'petty.meals.daily.payments.edit' => 'meals_daily.edit_payment',
+            'petty.meals.daily.payments.update' => 'meals_daily.edit_payment',
+            'petty.meals.daily.payments.destroy' => 'meals_daily.delete_payment',
 
             'petty.tokens.index' => 'tokens.view',
+            'petty.tokens.agreements.apply_history' => 'tokens.edit_hostel',
+            'petty.tokens.gateway.index' => 'tokens.view',
+            'petty.tokens.gateway.show' => 'tokens.view',
+            'petty.tokens.gateway.create' => 'tokens.record_payment',
+            'petty.tokens.gateway.store' => 'tokens.record_payment',
+            'petty.tokens.gateway.devices.store' => 'tokens.record_payment',
+            'petty.tokens.gateway.devices.update' => 'tokens.record_payment',
+            'petty.tokens.gateway.devices.destroy' => 'tokens.record_payment',
+            'petty.tokens.gateway.devices.activate' => 'tokens.record_payment',
+            'petty.tokens.gateway.test_sms' => 'tokens.record_payment',
+            'petty.tokens.gateway.send' => 'tokens.record_payment',
+            'petty.tokens.gateway.refresh_check' => 'tokens.record_payment',
+            'petty.tokens.gateway.manual_link' => 'tokens.record_payment',
+            'petty.tokens.gateway.confirm' => 'tokens.record_payment',
+            'petty.tokens.gateway.queue_customer_sms' => 'tokens.record_payment',
+            'petty.tokens.gateway.retry' => 'tokens.record_payment',
+            'petty.tokens.gateway.cancel' => 'tokens.record_payment',
+            'petty.tokens.hostels.gateway_pay' => 'tokens.record_payment',
             'petty.tokens.hostels.show' => 'tokens.view',
             'petty.tokens.pdf' => 'tokens.view',
             'petty.tokens.hostels.pdf' => 'tokens.view',
@@ -233,11 +273,13 @@ class PettyAccess
             'petty.tokens.hostels.merge_ont' => 'tokens.edit_hostel',
             'petty.tokens.hostels.refresh_ont_sn' => 'tokens.edit_hostel',
             'petty.tokens.payments.store' => 'tokens.record_payment',
+            'petty.tokens.payments.helper_sync' => 'tokens.record_payment',
             'petty.tokens.hostels.overpay.apply' => 'tokens.record_payment',
             'petty.tokens.hostels.pending_credits.store' => 'tokens.record_payment',
             'petty.tokens.hostels.pending_credits.sort' => 'tokens.record_payment',
             'petty.tokens.payments.edit' => 'tokens.edit_payment',
             'petty.tokens.payments.update' => 'tokens.edit_payment',
+            'petty.tokens.payments.destroy' => 'tokens.delete_payment',
 
             'petty.others.index' => 'others.view',
             'petty.others.pdf' => 'others.view',
@@ -245,12 +287,14 @@ class PettyAccess
             'petty.others.store' => 'others.create',
             'petty.others.edit' => 'others.edit',
             'petty.others.update' => 'others.edit',
+            'petty.others.destroy' => 'others.delete',
 
             'petty.bikes_master.index' => 'bikes_master.view',
             'petty.bikes_master.create' => 'bikes_master.create',
             'petty.bikes_master.store' => 'bikes_master.create',
             'petty.bikes_master.edit' => 'bikes_master.edit',
             'petty.bikes_master.update' => 'bikes_master.edit',
+            'petty.bikes_master.destroy' => 'bikes_master.delete',
 
             'petty.respondents.index' => 'respondents.view',
             'petty.respondents.create' => 'respondents.create',
@@ -258,6 +302,7 @@ class PettyAccess
             'petty.respondents.show' => 'respondents.view',
             'petty.respondents.edit' => 'respondents.edit',
             'petty.respondents.update' => 'respondents.edit',
+            'petty.respondents.destroy' => 'respondents.delete',
             'petty.respondents.card.generate' => 'respondents.edit',
             'petty.respondents.card.sms' => 'respondents.edit',
 
@@ -387,6 +432,7 @@ class PettyAccess
         if ($normalizedRole === 'customer_care') {
             return [
                 'dashboard.view',
+                'dashboard.summary',
                 'meals_daily.view',
                 'meals_daily.create',
                 'tokens.view',
@@ -397,6 +443,9 @@ class PettyAccess
         // Default viewer profile is read-only.
         return [
             'dashboard.view',
+            'dashboard.summary',
+            'dashboard.category_totals',
+            'dashboard.breakdown',
             'reports.view',
             'ledger.view',
             'credits.view',
@@ -404,6 +453,8 @@ class PettyAccess
             'bikes.view',
             'meals.view',
             'meals_daily.view',
+            'meals_daily.edit_bill',
+            'meals_daily.edit_payment',
             'tokens.view',
             'others.view',
             'bikes_master.view',
@@ -505,7 +556,7 @@ class PettyAccess
     private static function permissionsTableExists(): bool
     {
         if (self::$permissionsTableExists === null) {
-            self::$permissionsTableExists = Schema::hasTable('petty_user_permissions');
+            self::$permissionsTableExists = PettyDatabase::schema()->hasTable('petty_user_permissions');
         }
 
         return self::$permissionsTableExists;

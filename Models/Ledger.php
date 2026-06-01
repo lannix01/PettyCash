@@ -2,10 +2,13 @@
 
 namespace App\Modules\PettyCash\Models;
 
+use App\Modules\PettyCash\Support\UsesPettyConnection;
 use Illuminate\Database\Eloquent\Model;
 
 class Ledger extends Model
 {
+    use UsesPettyConnection;
+
     protected $table = 'pettycash_ledgers';
 
     protected $fillable = [

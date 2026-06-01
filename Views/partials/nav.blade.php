@@ -37,27 +37,65 @@
     .nav-wrap { padding: 6px; }
 
     .nav-brand {
-        padding: 10px 10px 14px;
+        padding: 10px 10px 16px;
         border-bottom: 1px solid var(--border);
-        margin-bottom: 12px;
+        margin-bottom: 16px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 10px;
     }
 
+    .nav-brand-main {
+        display: block;
+        min-width: 0;
+    }
+
+    .nav-brand-shell {
+        height: 34px;
+        width: auto;
+        display: block;
+        margin-bottom: 10px;
+        max-width: 176px;
+    }
+
     .nav-brand .name {
-        font-size: 18px;
+        font-size: 16px;
         font-weight: 900;
         color: var(--text);
-        letter-spacing: -0.3px;
-        line-height: 1.1;
+        letter-spacing: -0.2px;
+        line-height: 1.15;
     }
 
     .nav-brand .sub {
         font-size: 12px;
         color: var(--muted);
-        margin-top: 2px;
+        margin-top: 5px;
+        line-height: 1.45;
+    }
+
+    .nav-brand-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 10px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: .3px;
+        color: var(--brand-ink);
+        padding: 5px 9px;
+        border-radius: 999px;
+        border: 1px solid rgba(13, 139, 111, 0.14);
+        background: var(--brand-soft);
+    }
+
+    .nav-brand-tag::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--brand);
+        display: block;
     }
 
     .nav-close {
@@ -83,10 +121,10 @@
     .nav-label {
         font-size: 11px;
         font-weight: 800;
-        color: #8a8a8a;
+        color: #6b7c8b;
         text-transform: uppercase;
         letter-spacing: .5px;
-        margin: 0 10px 8px;
+        margin: 0 10px 10px;
         display: flex;
         align-items: center;
         gap: 8px;
@@ -98,39 +136,43 @@
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 10px 12px;
-        border-radius: 12px;
-        color: #475467;
+        padding: 11px 12px;
+        border-radius: 14px;
+        color: #415466;
         font-weight: 700;
         font-size: 14px;
         text-decoration: none;
-        transition: background .15s ease, color .15s ease;
-        margin-bottom: 2px;
+        transition: background .15s ease, color .15s ease, border-color .15s ease, transform .15s ease;
+        margin-bottom: 4px;
+        border: 1px solid transparent;
     }
 
     .nav-link:hover {
-        background: #f4f4f5;
-        color: #111827;
+        background: #f6fbf9;
+        border-color: rgba(13, 139, 111, 0.10);
+        color: var(--navy);
+        transform: translateX(2px);
     }
 
     .nav-link.active {
-        background: #111827;
+        background: linear-gradient(135deg, var(--navy) 0%, #1d3b51 100%);
         color: #fff;
+        box-shadow: 0 12px 24px rgba(21, 40, 58, 0.14);
     }
 
     .nav-link .nav-icon {
         width: 20px;
         text-align: center;
         font-size: 16px;
-        color: #98a2b3;
+        color: #8da0b2;
     }
 
     .nav-link.active .nav-icon { color: #fff; }
 
     .nav-divider {
         height: 1px;
-        background: #eef2f6;
-        margin: 10px 0;
+        background: #e9f0ee;
+        margin: 12px 0;
     }
 
     /* Footer "logged in as" */
@@ -138,8 +180,8 @@
         margin: 10px 6px 6px;
         padding: 10px 12px;
         border-radius: 12px;
-        background: #f8fafc;
-        border: 1px solid #eef2f6;
+        background: linear-gradient(180deg, #ffffff 0%, #f4f9f7 100%);
+        border: 1px solid #e5eeeb;
         color: #475467;
         font-size: 12px;
         line-height: 1.35;
@@ -178,9 +220,15 @@
 <aside class="sidebar">
     <div class="nav-wrap">
         <div class="nav-brand">
-            <div>
-                <div class="name">PettyCash</div>
-                <div class="sub">Operations ledger</div>
+            <div class="nav-brand-main">
+                <div>
+                    @if(!empty($pettyLogo))
+                        <img class="nav-brand-shell" src="{{ $pettyLogo }}" alt="Skybrix Internet">
+                    @endif
+                    <div class="name">PettyCash Operations</div>
+                    <div class="sub">Fast cash control and field reporting</div>
+                    <div class="nav-brand-tag">Finance dashboard</div>
+                </div>
             </div>
             <button class="nav-close" type="button" onclick="toggleSidebar()">×</button>
         </div>
@@ -261,6 +309,13 @@
                     <a class="nav-link {{ $is('petty.tokens') ? 'active' : '' }}" href="{{ route('petty.tokens.index') }}"
                        onclick="if(window.innerWidth<=980)toggleSidebar()">
                         <i class="bi bi-phone nav-icon"></i> Tokens
+                    </a>
+                @endif
+
+                @if($can('tokens.view') || $can('tokens.record_payment'))
+                    <a class="nav-link {{ $is('petty.tokens.gateway') ? 'active' : '' }}" href="{{ route('petty.tokens.gateway.index') }}"
+                       onclick="if(window.innerWidth<=980)toggleSidebar()">
+                        <i class="bi bi-phone-vibrate nav-icon"></i> Gateway Queue
                     </a>
                 @endif
 

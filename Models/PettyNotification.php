@@ -2,11 +2,14 @@
 
 namespace App\Modules\PettyCash\Models;
 
+use App\Modules\PettyCash\Support\UsesPettyConnection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PettyNotification extends Model
 {
+    use UsesPettyConnection;
+
     protected $table = 'petty_notifications';
 
     protected $fillable = [

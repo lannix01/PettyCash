@@ -24,8 +24,10 @@
 @section('content')
 @php
     $canEditOther = \App\Modules\PettyCash\Support\PettyAccess::allows(auth('petty')->user(), 'others.edit');
+    $canDeleteOther = \App\Modules\PettyCash\Support\PettyAccess::isAdmin(auth('petty')->user());
 @endphp
-<div class="wrap">
+<div class="wrap pc-list-shell" data-pc-list-root="other-spendings-index" data-pc-ajax="1">
+    <div class="pc-inline-refresh"><span class="spinner"></span><span>Refreshing records...</span></div>
     <div class="top">
         <div>
             <h2 style="margin:0">Others</h2>
@@ -38,9 +40,9 @@
             <a class="btn" href="{{ route('petty.others.create') }}">+ New Other</a>
             @include('pettycash::partials.export_select', [
                 'options' => [
-                    'PDF' => route('petty.others.pdf', ['from'=>$from,'to'=>$to,'batch_id'=>$batchId,'format'=>'pdf']),
-                    'CSV' => route('petty.others.pdf', ['from'=>$from,'to'=>$to,'batch_id'=>$batchId,'format'=>'csv']),
-                    'Excel' => route('petty.others.pdf', ['from'=>$from,'to'=>$to,'batch_id'=>$batchId,'format'=>'excel']),
+                    'PDF' => route('petty.others.pdf', ['from'=>$from,'to'=>$to,'batch_id'=>$batchId,'q'=>$q,'sort'=>$sort,'format'=>'pdf']),
+                    'CSV' => route('petty.others.pdf', ['from'=>$from,'to'=>$to,'batch_id'=>$batchId,'q'=>$q,'sort'=>$sort,'format'=>'csv']),
+                    'Excel' => route('petty.others.pdf', ['from'=>$from,'to'=>$to,'batch_id'=>$batchId,'q'=>$q,'sort'=>$sort,'format'=>'excel']),
                 ],
             ])
         </div>
@@ -48,13 +50,17 @@
 
     <div class="card">
         <div class="pc-filter-dock">
-            <details class="pc-filter-panel" @if(filled($from) || filled($to) || filled($batchId)) open @endif>
+            <details class="pc-filter-panel" open data-filter-pinned="1">
                 <summary>
                     <span class="pc-filter-title">Filters</span>
-                    <span class="pc-filter-state">{{ filled($from) || filled($to) || filled($batchId) ? 'active' : 'optional' }}</span>
+                    <span class="pc-filter-state">live</span>
                 </summary>
                 <div class="pc-filter-body">
-                    <form method="GET" class="row pc-filter-row" action="{{ route('petty.others.index') }}">
+                    <form method="GET" class="row pc-filter-row" action="{{ route('petty.others.index') }}" data-pc-auto-filter="1" data-pc-list-root-id="other-spendings-index">
+                        <div class="pc-filter-grow">
+                            <div class="muted">Search</div>
+                            <input type="search" name="q" value="{{ $q }}" placeholder="Reference, description, respondent, batch">
+                        </div>
                         <div>
                             <div class="muted">From</div>
                             <input type="date" name="from" value="{{ $from }}">
@@ -74,9 +80,19 @@
                                 @endforeach
                             </select>
                         </div>
-
-                        <button class="btn" type="submit">Filter</button>
-                        <a class="btn2" href="{{ route('petty.others.index') }}">Reset</a>
+                        <div>
+                            <div class="muted">Sort</div>
+                            <select name="sort">
+                                <option value="date_desc" @selected($sort === 'date_desc')>Newest First</option>
+                                <option value="date_asc" @selected($sort === 'date_asc')>Oldest First</option>
+                                <option value="amount_desc" @selected($sort === 'amount_desc')>Amount High-Low</option>
+                                <option value="amount_asc" @selected($sort === 'amount_asc')>Amount Low-High</option>
+                            </select>
+                        </div>
+                        <div class="pc-filter-actions">
+                            <button class="btn" type="submit">Apply</button>
+                            <a class="btn2" href="{{ route('petty.others.index') }}">Reset</a>
+                        </div>
                     </form>
                 </div>
             </details>
@@ -94,7 +110,7 @@
                     <th class="num">Total</th>
                     <th>Respondent</th>
                     <th>Batch</th>
-                    @if($canEditOther)
+                    @if($canEditOther || $canDeleteOther)
                         <th>Actions</th>
                     @endif
                 </tr>
@@ -114,12 +130,23 @@
                         <td class="num"><strong>{{ number_format($amt + $fee, 2) }}</strong></td>
                         <td>{{ $o->respondent?->name ?? '-' }}</td>
                         <td>{{ $o->batch?->batch_no ?? ($o->batch_id ?? '-') }}</td>
-                        @if($canEditOther)
-                            <td><a href="{{ route('petty.others.edit', $o->id) }}">Edit</a></td>
+                        @if($canEditOther || $canDeleteOther)
+                            <td>
+                                @if($canEditOther)
+                                    <a href="{{ route('petty.others.edit', $o->id) }}">Edit</a>
+                                @endif
+                                @if($canDeleteOther)
+                                    <form method="POST" action="{{ route('petty.others.destroy', $o->id) }}" style="display:inline-block;margin-left:8px" data-confirm="Delete this other spending?">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" style="border:none;background:none;color:#b42318;cursor:pointer;padding:0">Delete</button>
+                                    </form>
+                                @endif
+                            </td>
                         @endif
                     </tr>
                 @empty
-                    <tr><td colspan="{{ $canEditOther ? 9 : 8 }}" class="muted">No other spendings yet.</td></tr>
+                    <tr><td colspan="{{ ($canEditOther || $canDeleteOther) ? 9 : 8 }}" class="muted">No other spendings yet.</td></tr>
                 @endforelse
                 </tbody>
             </table>

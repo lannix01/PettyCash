@@ -2,10 +2,13 @@
 
 namespace App\Modules\PettyCash\Models;
 
+use App\Modules\PettyCash\Support\UsesPettyConnection;
 use Illuminate\Database\Eloquent\Model;
 
 class HostelPendingCredit extends Model
 {
+    use UsesPettyConnection;
+
     protected $table = 'petty_hostel_pending_credits';
 
     protected $fillable = [

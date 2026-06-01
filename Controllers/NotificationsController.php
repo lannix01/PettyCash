@@ -9,8 +9,9 @@ use App\Modules\PettyCash\Models\PettyNotificationSetting;
 use App\Modules\PettyCash\Models\PettySmsTemplate;
 use App\Modules\PettyCash\Models\PettySmsTemplateUsage;
 use App\Modules\PettyCash\Services\TokenDueNotificationService;
+use App\Modules\PettyCash\Support\PettyAccess;
+use App\Modules\PettyCash\Support\PettyDatabase;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Schema;
 
 class NotificationsController extends Controller
 {
@@ -41,7 +42,7 @@ class NotificationsController extends Controller
 
         $unreadCount = PettyNotification::where('module', 'pettycash')->where('is_read', false)->count();
 
-        $settings = Schema::hasTable('petty_notification_settings')
+        $settings = PettyDatabase::schema()->hasTable('petty_notification_settings')
             ? PettyNotificationSetting::current()
             : new PettyNotificationSetting([
                 'sms_gateway' => 'advanta',
@@ -50,19 +51,32 @@ class NotificationsController extends Controller
                 'low_credit_threshold' => 0,
             ]);
 
-        $adminContacts = Schema::hasTable('petty_notification_admin_contacts')
+        $adminContacts = PettyDatabase::schema()->hasTable('petty_notification_admin_contacts')
             ? PettyNotificationAdminContact::query()->orderByDesc('id')->get()
             : collect();
 
-        $templates = Schema::hasTable('petty_sms_templates')
+        $templates = PettyDatabase::schema()->hasTable('petty_sms_templates')
             ? PettySmsTemplate::query()->orderByDesc('id')->get()
             : collect();
 
         $eventOptions = self::templateEventOptions();
 
-        $templateUsage = (Schema::hasTable('petty_sms_template_usages') && Schema::hasTable('petty_sms_templates'))
+        $templateUsage = (PettyDatabase::schema()->hasTable('petty_sms_template_usages') && PettyDatabase::schema()->hasTable('petty_sms_templates'))
             ? PettySmsTemplateUsage::query()->pluck('template_id', 'event_key')->toArray()
             : [];
+
+        $recipientUsage = [];
+        if (PettyDatabase::schema()->hasColumn('petty_notification_settings', 'sms_recipient_map')) {
+            $recipientUsage = collect((array) ($settings->sms_recipient_map ?? []))
+                ->map(fn ($ids) => array_values(array_map('intval', (array) $ids)))
+                ->toArray();
+        }
+
+        $roleOptions = PettyAccess::roleOptions();
+        $smsEventMap = $this->resolvedEventMap($settings->sms_event_map ?? null, PettyNotificationSetting::defaultSmsEventMap());
+        $emailEventMap = $this->resolvedEventMap($settings->email_event_map ?? null, PettyNotificationSetting::defaultEmailEventMap());
+        $smsRoleMap = $this->resolvedRoleMap($settings->sms_role_map ?? null);
+        $emailRoleMap = $this->resolvedRoleMap($settings->email_role_map ?? null);
 
         $placeholderCards = self::placeholderCards();
         $autoCheckResult = session('auto_check_result');
@@ -78,6 +92,12 @@ class NotificationsController extends Controller
             'templates',
             'eventOptions',
             'templateUsage',
+            'recipientUsage',
+            'roleOptions',
+            'smsEventMap',
+            'emailEventMap',
+            'smsRoleMap',
+            'emailRoleMap',
             'placeholderCards',
             'autoCheckResult'
         ));
@@ -181,13 +201,27 @@ class NotificationsController extends Controller
         $rules = [
             'sms_gateway' => ['required', 'in:advanta,amazons'],
             'sms_enabled' => ['nullable', 'boolean'],
+            'email_enabled' => ['nullable', 'boolean'],
             'low_balance_threshold' => ['nullable', 'numeric', 'min:0'],
             'low_credit_threshold' => ['nullable', 'numeric', 'min:0'],
             'template_usage' => ['nullable', 'array'],
+            'recipient_usage' => ['nullable', 'array'],
+            'sms_event_enabled' => ['nullable', 'array'],
+            'sms_event_enabled.*' => ['required', 'string', 'in:' . implode(',', array_keys(self::templateEventOptions()))],
+            'email_event_enabled' => ['nullable', 'array'],
+            'email_event_enabled.*' => ['required', 'string', 'in:' . implode(',', array_keys(self::templateEventOptions()))],
+            'sms_role_usage' => ['nullable', 'array'],
+            'email_role_usage' => ['nullable', 'array'],
         ];
 
         foreach (array_keys(self::templateEventOptions()) as $eventKey) {
             $rules['template_usage.' . $eventKey] = ['nullable', 'integer', 'exists:petty_sms_templates,id'];
+            $rules['recipient_usage.' . $eventKey] = ['nullable', 'array'];
+            $rules['recipient_usage.' . $eventKey . '.*'] = ['nullable', 'integer', 'exists:petty_notification_admin_contacts,id'];
+            $rules['sms_role_usage.' . $eventKey] = ['nullable', 'array'];
+            $rules['sms_role_usage.' . $eventKey . '.*'] = ['nullable', 'string', 'in:' . implode(',', array_keys(PettyAccess::roleOptions()))];
+            $rules['email_role_usage.' . $eventKey] = ['nullable', 'array'];
+            $rules['email_role_usage.' . $eventKey . '.*'] = ['nullable', 'string', 'in:' . implode(',', array_keys(PettyAccess::roleOptions()))];
         }
 
         $data = $request->validate($rules);
@@ -196,10 +230,45 @@ class NotificationsController extends Controller
         $settings->fill([
             'sms_gateway' => $data['sms_gateway'],
             'sms_enabled' => (bool)($data['sms_enabled'] ?? false),
+            'email_enabled' => (bool)($data['email_enabled'] ?? false),
             'low_balance_threshold' => (float)($data['low_balance_threshold'] ?? 0),
             'low_credit_threshold' => (float)($data['low_credit_threshold'] ?? 0),
             'updated_by' => auth('petty')->id(),
         ]);
+
+        $smsEventEnabled = collect((array) ($data['sms_event_enabled'] ?? []))
+            ->map(fn ($eventKey) => (string) $eventKey)
+            ->flip()
+            ->all();
+
+        $emailEventEnabled = collect((array) ($data['email_event_enabled'] ?? []))
+            ->map(fn ($eventKey) => (string) $eventKey)
+            ->flip()
+            ->all();
+
+        $settings->sms_event_map = collect(array_keys(self::templateEventOptions()))
+            ->mapWithKeys(fn (string $eventKey) => [$eventKey => isset($smsEventEnabled[$eventKey])])
+            ->all();
+
+        $settings->email_event_map = collect(array_keys(self::templateEventOptions()))
+            ->mapWithKeys(fn (string $eventKey) => [$eventKey => isset($emailEventEnabled[$eventKey])])
+            ->all();
+
+        if (PettyDatabase::schema()->hasColumn('petty_notification_settings', 'sms_recipient_map')) {
+            $recipientUsage = [];
+            foreach (array_keys(self::templateEventOptions()) as $eventKey) {
+                $recipientUsage[$eventKey] = array_values(array_unique(array_map(
+                    'intval',
+                    (array) data_get($data, 'recipient_usage.' . $eventKey, [])
+                )));
+            }
+
+            $settings->sms_recipient_map = $recipientUsage;
+        }
+
+        $settings->sms_role_map = $this->normalizedRoleMap((array) ($data['sms_role_usage'] ?? []));
+        $settings->email_role_map = $this->normalizedRoleMap((array) ($data['email_role_usage'] ?? []));
+
         $settings->save();
 
         $selected = (array)($data['template_usage'] ?? []);
@@ -217,6 +286,67 @@ class NotificationsController extends Controller
             'success' => 'SMS settings saved.',
             'open_sms_settings' => true,
         ]);
+    }
+
+    /**
+     * @param array<string,mixed>|null $map
+     * @param array<string,bool> $defaults
+     * @return array<string,bool>
+     */
+    private function resolvedEventMap(?array $map, array $defaults): array
+    {
+        $resolved = $defaults;
+        foreach ($defaults as $eventKey => $defaultValue) {
+            if (is_array($map) && array_key_exists($eventKey, $map)) {
+                $resolved[$eventKey] = (bool) $map[$eventKey];
+            } else {
+                $resolved[$eventKey] = (bool) $defaultValue;
+            }
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * @param array<string,mixed>|null $map
+     * @return array<string,array<int,string>>
+     */
+    private function resolvedRoleMap(?array $map): array
+    {
+        $defaults = PettyNotificationSetting::emptyRoleMap();
+        foreach (array_keys($defaults) as $eventKey) {
+            $defaults[$eventKey] = $this->normalizeRoles((array) data_get($map, $eventKey, []));
+        }
+
+        return $defaults;
+    }
+
+    /**
+     * @param array<string,mixed> $map
+     * @return array<string,array<int,string>>
+     */
+    private function normalizedRoleMap(array $map): array
+    {
+        $resolved = PettyNotificationSetting::emptyRoleMap();
+        foreach (array_keys($resolved) as $eventKey) {
+            $resolved[$eventKey] = $this->normalizeRoles((array) data_get($map, $eventKey, []));
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * @param array<int,mixed> $roles
+     * @return array<int,string>
+     */
+    private function normalizeRoles(array $roles): array
+    {
+        $allowed = array_fill_keys(array_keys(PettyAccess::roleOptions()), true);
+
+        return array_values(array_unique(array_filter(array_map(function ($role) use ($allowed) {
+            $normalized = PettyAccess::normalizeRole((string) $role);
+            return isset($allowed[$normalized]) ? $normalized : null;
+        }, $roles))));
     }
 
     public function markRead(PettyNotification $notification)

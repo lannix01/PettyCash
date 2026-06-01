@@ -170,7 +170,7 @@
                                     @endif
                                 </td>
                                 <td>
-                                    <form method="POST" action="{{ route('petty.profile.users.send_login_sms', $u->id) }}" style="margin:0" onsubmit="return confirm('Send new login credentials by SMS to this user? This will reset their password.');">
+                                    <form method="POST" action="{{ route('petty.profile.users.send_login_sms', $u->id) }}" style="margin:0" data-confirm="Send new login credentials by SMS to this user? This will reset their password.">
                                         @csrf
                                         <button class="btn-link" type="submit" @disabled(empty($u->phone_no))>
                                             Send Login SMS
